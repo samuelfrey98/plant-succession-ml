@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Data
+data/raw/
+data/processed/
+*.sqlite
+*.db
+
+# Large media and private exports
+photos/
+*.jpg
+*.jpeg
+*.png
+*.heic
+*.mov
+*.mp4
+*.kml
+*.kmz
+
+# Generated outputs
+outputs/figures/*
+outputs/maps/*
+!outputs/figures/.gitkeep
+!outputs/maps/.gitkeep
+!outputs/maps/site_registry_sample.geojson
+
+# Local secrets
+.env
+credentials.json
+token.json

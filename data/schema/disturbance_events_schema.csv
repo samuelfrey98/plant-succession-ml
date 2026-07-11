@@ -1,0 +1,13 @@
+field_name,data_type,required,allowed_values,description,example
+disturbance_event_id,string,yes,,Globally unique disturbance event ID.,DIST-2026-0001
+site_id,int,yes,,Foreign key to site_registry.site_id.,2
+disturbance_window_start,date,yes,,Earliest possible event date or datetime.,2026-06-01
+disturbance_window_end,date,yes,,Latest possible event date or datetime.,2026-06-07
+disturbance_event_type,categorical,yes,mowing;herbicide;construction;soil_disturbance;flooding;pruning;tree_fall;other,Broad disturbance class.,mowing
+disturbance_confidence,categorical,yes,observed;likely;maybe,Confidence in event interpretation.,likely
+detailed_event_type,string,no,,More specific disturbance type.,cut_stems
+evidence,string,yes,,Field evidence supporting the event.,Fresh cut stems and mower tracks visible along edge.
+herbicide_type,string,no,,Leave blank unless known.,
+herbicide_application_method,string,no,,Leave blank unless known or strongly inferred.,
+related_observation_id,string,no,,Observation where event was noticed.,OBS-2026-0002
+notes,string,no,,Free-text details.,Event timing inferred between visits.

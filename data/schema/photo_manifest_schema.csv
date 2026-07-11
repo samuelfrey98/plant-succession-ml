@@ -1,0 +1,13 @@
+field_name,data_type,required,allowed_values,description,example
+photo_id,string,yes,,Globally unique photo ID.,PHOTO-2026-0001
+observation_id,string,yes,,Foreign key to observations.observation_id.,OBS-2026-0001
+site_id,int,yes,,Foreign key to site_registry.site_id. Redundant but convenient.,1
+observation_date,date,yes,,Observation date. Redundant but convenient.,2026-06-07
+photo_type,categorical,yes,wide;quadrat;close_up;context_left;context_right;extra,Photo role in monitoring protocol.,wide
+drive_file_url,string,no,,Google Drive file link.,https://example.com/photo
+drive_folder_url,string,no,,Optional parent folder link.,https://example.com/folder
+local_filename,string,no,,Optional exported local filename.,site_01_2026-06-07_wide.jpg
+width_px,int,no,,Optional pixel width.,4032
+height_px,int,no,,Optional pixel height.,3024
+file_size_mb,float,no,,Optional file size in megabytes.,3.8
+notes,string,no,,Optional photo notes.,Sanitized sample link.

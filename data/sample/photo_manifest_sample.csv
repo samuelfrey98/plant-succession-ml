@@ -1,0 +1,4 @@
+photo_id,observation_id,site_id,observation_date,photo_type,drive_file_url,drive_folder_url,local_filename,width_px,height_px,file_size_mb,notes
+PHOTO-2026-0001,OBS-2026-0001,1,2026-06-07,wide,https://example.com/photos/site_01/2026-06-07/wide,https://example.com/photos/site_01/2026-06-07,site_01_2026-06-07_wide.jpg,4032,3024,3.8,Sanitized sample link.
+PHOTO-2026-0002,OBS-2026-0001,1,2026-06-07,quadrat,https://example.com/photos/site_01/2026-06-07/quadrat,https://example.com/photos/site_01/2026-06-07,site_01_2026-06-07_quadrat.jpg,4032,3024,4.1,Sanitized sample link.
+PHOTO-2026-0003,OBS-2026-0003,3,2026-06-07,wide,https://example.com/photos/site_03/2026-06-07/wide,https://example.com/photos/site_03/2026-06-07,site_03_2026-06-07_wide.jpg,4032,3024,3.6,Useful gravel-fill overview.

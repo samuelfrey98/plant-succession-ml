@@ -1,0 +1,77 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.5198,
+          40.1301
+        ]
+      },
+      "properties": {
+        "site_id": "1",
+        "site_name": "Behind White Warehouse",
+        "habitat_context": "woodland_edge",
+        "priority_rank": "8",
+        "active": "true",
+        "notes": "Sanitized public example."
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.5194,
+          40.1297
+        ]
+      },
+      "properties": {
+        "site_id": "2",
+        "site_name": "Mugwort-Dominated Edge",
+        "habitat_context": "road_edge",
+        "priority_rank": "9",
+        "active": "true",
+        "notes": "Coordinates rounded for public sample."
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.5189,
+          40.1299
+        ]
+      },
+      "properties": {
+        "site_id": "3",
+        "site_name": "Gravel-Fill Colonization",
+        "habitat_context": "gravel_fill",
+        "priority_rank": "3",
+        "active": "true",
+        "notes": "Useful early-colonization contrast."
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.5178,
+          40.131
+        ]
+      },
+      "properties": {
+        "site_id": "4",
+        "site_name": "Rocky Slope Colonization Experiment",
+        "habitat_context": "mixed_edge",
+        "priority_rank": "5",
+        "active": "true",
+        "notes": "Site metadata still provisional."
+      }
+    }
+  ]
+}
