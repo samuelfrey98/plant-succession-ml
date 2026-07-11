@@ -1,0 +1,34 @@
+field_name,data_type,required,allowed_values,description,example
+observation_id,string,yes,,Globally unique observation ID.,OBS-2026-0001
+site_id,int,yes,,Foreign key to site_registry.site_id.,1
+observation_date,date,yes,,Date of field observation.,2026-06-07
+observation_datetime,datetime,no,,Optional precise observation timestamp.,2026-06-07T09:30:00
+observer_id,string,no,,Observer identifier.,observer_01
+dominant_species,string,no,,Best defensible dominant taxon label.,Artemisia vulgaris
+dominant_taxon_rank,categorical,no,species;genus;family;unknown;morphotype,Taxonomic rank for dominant label.,species
+dominant_species_confidence,categorical,no,confident;likely;uncertain,Confidence for dominant label.,likely
+dominant_flowering,bool,no,true;false,Whether dominant taxon is visibly flowering.,false
+dominant_seed_set,bool,no,true;false,Whether dominant taxon has visible fruit or seed structures.,false
+secondary_species,string,no,,Best defensible secondary taxon label.,Asteraceae sp.
+secondary_taxon_rank,categorical,no,species;genus;family;unknown;morphotype,Taxonomic rank for secondary label.,family
+secondary_species_confidence,categorical,no,confident;likely;uncertain,Confidence for secondary label.,uncertain
+secondary_flowering,bool,no,true;false,Whether secondary taxon is visibly flowering.,true
+secondary_seed_set,bool,no,true;false,Whether secondary taxon has visible fruit or seed structures.,false
+tertiary_species,string,no,,Best defensible tertiary taxon label.,unknown_grass_01
+tertiary_taxon_rank,categorical,no,species;genus;family;unknown;morphotype,Taxonomic rank for tertiary label.,morphotype
+tertiary_species_confidence,categorical,no,confident;likely;uncertain,Confidence for tertiary label.,uncertain
+tertiary_flowering,bool,no,true;false,Whether tertiary taxon is visibly flowering.,false
+tertiary_seed_set,bool,no,true;false,Whether tertiary taxon has visible fruit or seed structures.,false
+estimated_total_vegetation_cover_pct,int,no,,Estimated live vegetation cover from 0 to 100.,45
+bare_ground_pct,int,no,,Estimated bare soil cover from 0 to 100.,20
+gravel_rock_pct,int,no,,Estimated gravel or rock cover from 0 to 100.,25
+litter_mulch_woodchip_pct,int,no,,Estimated litter mulch or woodchip cover from 0 to 100.,10
+standing_dead_pct,int,no,,Estimated standing dead vegetation cover from 0 to 100.,5
+new_species_detected,bool,no,true;false,Whether a new taxon was noticed at the site.,true
+successional_stage,categorical,no,early_colonization;developing_herb_layer;dense_herb_layer;shrub_establishment;young_woodland,Subjective stage label.,early_colonization
+wide_photo_link,string,no,,Drive file or folder link.,https://example.com/photos/site_01/2026-06-07/wide
+quadrat_photo_link,string,no,,Drive file or folder link.,https://example.com/photos/site_01/2026-06-07/quadrat
+close_up_photo_link,string,no,,Drive file or folder link.,https://example.com/photos/site_01/2026-06-07/closeup
+context_photo_left_link,string,no,,Drive file or folder link.,https://example.com/photos/site_01/2026-06-07/context-left
+context_photo_right_link,string,no,,Drive file or folder link.,https://example.com/photos/site_01/2026-06-07/context-right
+notes,string,no,,General field notes.,Sample row with sanitized links.

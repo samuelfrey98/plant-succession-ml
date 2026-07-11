@@ -1,0 +1,14 @@
+field_name,data_type,required,allowed_values,description,example
+site_id,int,yes,,Stable site identifier. Do not renumber casually.,1
+site_name,string,yes,,Human-readable site name.,Behind White Warehouse
+site_description,string,no,,Short habitat or site-context description.,Disturbed woodland edge behind warehouse
+latitude,float,no,,Decimal degrees. Use sanitized/rounded values for public examples.,40.1300
+longitude,float,no,,Decimal degrees. Use sanitized/rounded values for public examples.,-75.5200
+established_date,date,no,,Date site was added to the monitoring project.,2026-06-06
+active,bool,yes,true;false,Whether the site is currently monitored.,true
+priority_rank,int,no,,Optional ranking for project usefulness.,4
+habitat_context,categorical,no,trail_edge;road_edge;gravel_fill;woodland_edge;field_edge;construction_edge;mixed_edge;other,Broad habitat or edge context.,woodland_edge
+dominant_initial_disturbance,categorical,no,mowing;herbicide;construction;soil_disturbance;flooding;pruning;tree_fall;unknown;other,Initial disturbance context when site was selected.,soil_disturbance
+photo_anchor_notes,string,no,,Standing location and repeatable photo-alignment notes.,Stand at path edge and align warehouse corner with middle vertical gridline.
+map_url,string,no,,Optional map link.,https://example.com/map/site-1
+notes,string,no,,Free-text site notes.,Sanitized public example row.
