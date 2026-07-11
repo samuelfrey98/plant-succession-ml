@@ -63,6 +63,8 @@ Recommended photo set per site visit:
 
 Photo instructions use fixed landmarks, stable standing locations, consistent zoom, and phone gridline alignment where possible.
 
+Annotated examples are available in [docs/protocol_photos/](docs/protocol_photos/).
+
 ## Repository Structure
 
 ```text
