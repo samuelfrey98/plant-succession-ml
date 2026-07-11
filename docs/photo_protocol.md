@@ -75,3 +75,6 @@ Advantages:
 
 Raw photos should stay out of GitHub unless intentionally compressed, anonymized, and selected as examples.
 
+## Protocol Photo Examples
+
+Annotated protocol screenshots are available in [protocol_photos/](protocol_photos/). These are compressed documentation copies that show standing locations, gridline alignment, visual landmarks, and context-photo framing.

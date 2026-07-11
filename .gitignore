@@ -23,6 +23,7 @@ photos/
 *.mp4
 *.kml
 *.kmz
+!docs/protocol_photos/images/*.jpg
 
 # Generated outputs
 outputs/figures/*
