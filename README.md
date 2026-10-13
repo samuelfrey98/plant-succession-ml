@@ -4,18 +4,27 @@ Field-data infrastructure for tracking plant succession, disturbance response, a
 
 This project combines repeatable field photography, structured observation forms, disturbance-event logging, and geospatial site tracking to build a small longitudinal dataset for later ecological analysis and computer-vision experiments.
 
+**11 sites | 63 visit folders | 497 field photos | May 25-July 20, 2026**
+
 ## Project Status
 
-This repository is an early public version of an active field project. The current work is focused on building credible monitoring infrastructure:
+The photo archive has been inventoried and normalized into a public metadata manifest. Structured
+observation rows are the next ingestion source and have not yet been added to this repository.
 
-- 10 mapped monitoring sites in Google My Maps / Google Earth
+Current implemented assets:
+
+- 11 monitoring sites, including one later-established sensitive-fern disturbance site
 - A structured Google Form for site observations
 - A Google Sheets workbook with site, observation, and disturbance-event tables
 - Repeatable photo protocols for wide, quadrat, close-up, and context photos
 - Initial schema design for ecological observations and disturbance history
-- Planned validation, analysis, geospatial export, and ML-ready photo organization
+- A sanitized 497-row photo manifest with deterministic IDs and logical archive paths
+- A 63-row upload-batch summary that preserves an empty Site 3 visit folder as an explicit issue
+- Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
+- Planned observation ingestion, analysis-ready joins, and longitudinal figures
 
-The project does not yet include a trained machine-learning model. The immediate goal is to collect clean, repeatable, well-documented data that could support later computer-vision and geospatial analysis.
+The project does not yet include a trained machine-learning model. Photo roles are deliberately marked
+`unclassified` until visual review; camera order is not treated as a reliable label.
 
 ## Research Question
 
@@ -95,8 +104,11 @@ The project is organized around three core tables:
 - `site_registry`: one row per monitoring site
 - `observations`: one row per site visit
 - `disturbance_events`: one row per observed or inferred disturbance event
+- `photo_manifest`: one row per uploaded field photo
+- `photo_batch_summary`: one row per site/date upload folder
 
-A future `photo_manifest` table links observation rows to individual Drive photo files or folders.
+The public photo manifest links each photo to a deterministic site/date observation ID without exposing
+private Drive file IDs, links, or exact coordinates.
 
 Each schema file in `data/schema/` uses:
 
@@ -142,6 +154,12 @@ Validate the sample data:
 
 ```bash
 python scripts/validate_csvs.py
+```
+
+Rebuild the public photo metadata when a private Drive inventory export is available:
+
+```bash
+python scripts/build_photo_manifest.py
 ```
 
 Export sample sites with coordinates to GeoJSON:

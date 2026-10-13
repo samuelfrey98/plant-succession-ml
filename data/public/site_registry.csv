@@ -1,0 +1,12 @@
+site_id,site_name,site_description,latitude,longitude,established_date,active,priority_rank,habitat_context,dominant_initial_disturbance,photo_anchor_notes,map_url,notes
+1,Behind White Warehouse,Disturbed vegetation between the trail and warehouse,,,2026-05-25,true,,mixed_edge,soil_disturbance,,,Exact coordinates withheld from public dataset.
+2,Mugwort-Dominated Edge,Dense mugwort along a paved edge,,,2026-05-25,true,,road_edge,unknown,,,Exact coordinates withheld from public dataset.
+3,Gravel-Fill Colonization,Colonizing vegetation in gravel and fill beside an industrial edge,,,2026-05-25,true,,gravel_fill,construction,,,Exact coordinates withheld from public dataset.
+4,"Rocky Slope, Colonization Experiment",Rocky disturbed slope beside a fenced industrial property,,,2026-05-25,true,,construction_edge,soil_disturbance,,,Exact coordinates withheld from public dataset.
+5,"Mowed, Knotweed-Adjacent Patch",Mowed patch adjoining knotweed and woodland vegetation,,,2026-05-25,true,,woodland_edge,mowing,,,Exact coordinates withheld from public dataset.
+6,Knotweed and Carrots,Woodland edge with knotweed and carrot-family plants,,,2026-05-25,true,,woodland_edge,unknown,,,Exact coordinates withheld from public dataset.
+7,Mowed Field Edge,Recently mowed field edge beside a sidewalk and road,,,2026-06-03,true,,field_edge,mowing,,,Established during the second monitoring period; exact coordinates withheld.
+8,Mugwort-Surrounded Patch,Open patch surrounded by mugwort and roadside vegetation,,,2026-05-25,true,,road_edge,unknown,,,Exact coordinates withheld from public dataset.
+9,Wood-Chip Recolonization,Wood-chip-covered woodland edge undergoing recolonization,,,2026-05-25,true,,woodland_edge,other,,,Exact coordinates withheld from public dataset.
+10,Exposed Subsoil,Woodland edge with exposed and periodically disturbed subsoil,,,2026-05-25,true,,woodland_edge,soil_disturbance,,,Exact coordinates withheld from public dataset.
+11,Sensitive Fern Disturbance Slope,Hillside patch containing sensitive fern and intermittent digging disturbance,,,2026-07-03,true,,other,soil_disturbance,,,Added later in monitoring; disturbance cause is unknown and exact coordinates are withheld.

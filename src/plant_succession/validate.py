@@ -7,6 +7,7 @@ data-quality check can run before notebook or analysis dependencies are installe
 from __future__ import annotations
 
 import csv
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -217,6 +218,21 @@ def validate_site_references(
     return issues
 
 
+def validate_unique_values(
+    table: str, rows: list[dict[str, str]], column: str
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    counts = Counter(row.get(column, "").strip() for row in rows)
+    duplicate_values = {value for value, count in counts.items() if value and count > 1}
+    for index, row in enumerate(rows):
+        value = row.get(column, "").strip()
+        if value in duplicate_values:
+            issues.append(
+                ValidationIssue(table, row_number(index), column, f"duplicate value '{value}'")
+            )
+    return issues
+
+
 def validate_observation_content(rows: list[dict[str, str]]) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     taxon_columns = ["dominant_species", "secondary_species", "tertiary_species", "notes"]
@@ -289,6 +305,194 @@ def validate_dataset(data_dir: Path, schema_dir: Path) -> list[ValidationIssue]:
         issues.extend(validate_observation_content(tables["observations"]))
     if "disturbance_events" in tables:
         issues.extend(validate_disturbance_windows(tables["disturbance_events"]))
+
+    return issues
+
+
+def validate_public_photo_data(public_dir: Path, schema_dir: Path) -> list[ValidationIssue]:
+    """Validate the sanitized site registry, photo manifest, and upload summary."""
+
+    issues: list[ValidationIssue] = []
+    required_files = {
+        "site_registry": public_dir / "site_registry.csv",
+        "photo_manifest": public_dir / "photo_manifest.csv",
+        "photo_batch_summary": public_dir / "photo_batch_summary.csv",
+    }
+    for table, path in required_files.items():
+        if not path.exists():
+            issues.append(ValidationIssue(table, None, None, f"missing file: {path}"))
+    if issues:
+        return issues
+
+    site_rows = read_csv(required_files["site_registry"])
+    photo_rows = read_csv(required_files["photo_manifest"])
+    summary_rows = read_csv(required_files["photo_batch_summary"])
+    tables = {"site_registry": site_rows, "photo_manifest": photo_rows}
+
+    for table in ("site_registry", "photo_manifest"):
+        path = required_files[table]
+        schema = read_csv(schema_dir / SCHEMA_FILES[table])
+        issues.extend(validate_table(table, tables[table], read_headers(path), schema))
+
+    issues.extend(validate_site_references(tables))
+    issues.extend(validate_unique_values("site_registry", site_rows, "site_id"))
+    issues.extend(validate_unique_values("photo_manifest", photo_rows, "photo_id"))
+    issues.extend(validate_unique_values("photo_manifest", photo_rows, "relative_path"))
+
+    private_columns = {"drive_file_id", "drive_file_url", "drive_folder_url"}
+    leaked_columns = private_columns.intersection(read_headers(required_files["photo_manifest"]))
+    for column in sorted(leaked_columns):
+        issues.append(
+            ValidationIssue(
+                "photo_manifest",
+                None,
+                column,
+                "private Drive metadata must not appear in the public manifest",
+            )
+        )
+
+    manifest_counts: Counter[tuple[str, str]] = Counter()
+    for index, row in enumerate(photo_rows):
+        site_id = row.get("site_id", "").strip()
+        observation_date = row.get("observation_date", "").strip()
+        observation_id = row.get("observation_id", "").strip()
+        expected_id = f"site_{int(site_id):02d}_{observation_date.replace('-', '_')}"
+        if observation_id != expected_id:
+            issues.append(
+                ValidationIssue(
+                    "photo_manifest",
+                    row_number(index),
+                    "observation_id",
+                    f"expected '{expected_id}' for site/date",
+                )
+            )
+
+        photo_type = row.get("photo_type", "").strip()
+        status = row.get("classification_status", "").strip()
+        if status == "pending_visual_review" and photo_type != "unclassified":
+            issues.append(
+                ValidationIssue(
+                    "photo_manifest",
+                    row_number(index),
+                    "photo_type",
+                    "pending visual review must use photo_type 'unclassified'",
+                )
+            )
+        if status == "verified" and photo_type == "unclassified":
+            issues.append(
+                ValidationIssue(
+                    "photo_manifest",
+                    row_number(index),
+                    "classification_status",
+                    "verified photos must have a classified photo_type",
+                )
+            )
+
+        try:
+            if int(row.get("file_size_bytes", "")) <= 0:
+                raise ValueError
+        except ValueError:
+            issues.append(
+                ValidationIssue(
+                    "photo_manifest",
+                    row_number(index),
+                    "file_size_bytes",
+                    "must be a positive integer",
+                )
+            )
+        manifest_counts[(site_id, observation_date)] += 1
+
+    summary_headers = set(read_headers(required_files["photo_batch_summary"]))
+    expected_summary_headers = {
+        "site_id",
+        "observation_date",
+        "photo_count",
+        "upload_status",
+    }
+    for column in sorted(expected_summary_headers - summary_headers):
+        issues.append(
+            ValidationIssue("photo_batch_summary", None, column, "required column is missing")
+        )
+
+    summary_keys: set[tuple[str, str]] = set()
+    known_site_ids = {row.get("site_id", "").strip() for row in site_rows}
+    for index, row in enumerate(summary_rows):
+        site_id = row.get("site_id", "").strip()
+        observation_date = row.get("observation_date", "").strip()
+        key = (site_id, observation_date)
+        if key in summary_keys:
+            issues.append(
+                ValidationIssue(
+                    "photo_batch_summary",
+                    row_number(index),
+                    None,
+                    f"duplicate site/date batch {site_id}/{observation_date}",
+                )
+            )
+        summary_keys.add(key)
+
+        if site_id not in known_site_ids:
+            issues.append(
+                ValidationIssue(
+                    "photo_batch_summary",
+                    row_number(index),
+                    "site_id",
+                    f"unknown site_id '{site_id}'",
+                )
+            )
+        if parse_datetime(observation_date) is None:
+            issues.append(
+                ValidationIssue(
+                    "photo_batch_summary",
+                    row_number(index),
+                    "observation_date",
+                    f"invalid date: {observation_date}",
+                )
+            )
+
+        try:
+            declared_count = int(row.get("photo_count", ""))
+        except ValueError:
+            declared_count = -1
+            issues.append(
+                ValidationIssue(
+                    "photo_batch_summary",
+                    row_number(index),
+                    "photo_count",
+                    "must be a non-negative integer",
+                )
+            )
+        actual_count = manifest_counts.get(key, 0)
+        if declared_count != actual_count:
+            issues.append(
+                ValidationIssue(
+                    "photo_batch_summary",
+                    row_number(index),
+                    "photo_count",
+                    f"declares {declared_count}; manifest contains {actual_count}",
+                )
+            )
+
+        expected_status = "empty_folder" if declared_count == 0 else "uploaded"
+        if row.get("upload_status", "").strip() != expected_status:
+            issues.append(
+                ValidationIssue(
+                    "photo_batch_summary",
+                    row_number(index),
+                    "upload_status",
+                    f"expected '{expected_status}'",
+                )
+            )
+
+    for site_id, observation_date in sorted(set(manifest_counts) - summary_keys):
+        issues.append(
+            ValidationIssue(
+                "photo_batch_summary",
+                None,
+                None,
+                f"missing manifest batch {site_id}/{observation_date}",
+            )
+        )
 
     return issues
 
