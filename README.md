@@ -4,12 +4,13 @@ Field-data infrastructure for tracking plant succession, disturbance response, a
 
 This project combines repeatable field photography, structured observation forms, disturbance-event logging, and geospatial site tracking to build a small longitudinal dataset for later ecological analysis and computer-vision experiments.
 
-**11 sites | 63 visit folders | 497 field photos | May 25-July 20, 2026**
+**11 sites | 63 visit folders | 62 photo-backed observations | 497 field photos | May 25-July 20, 2026**
 
 ## Project Status
 
-The photo archive has been inventoried and normalized into a public metadata manifest. Structured
-observation rows are the next ingestion source and have not yet been added to this repository.
+The photo archive has been inventoried and normalized into a public metadata manifest. One
+observation shell is generated for each non-empty site/date photo batch; ecological fields remain
+pending until visual review supports a defensible value.
 
 Current implemented assets:
 
@@ -19,6 +20,7 @@ Current implemented assets:
 - Repeatable photo protocols for wide, quadrat, close-up, and context photos
 - Initial schema design for ecological observations and disturbance history
 - A sanitized 497-row photo manifest with deterministic IDs and logical archive paths
+- A 62-row observation table derived from photo-backed site visits, with explicit provenance
 - A 63-row upload-batch summary that preserves an empty Site 3 visit folder as an explicit issue
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
 - Planned observation ingestion, analysis-ready joins, and longitudinal figures
@@ -160,6 +162,12 @@ Rebuild the public photo metadata when a private Drive inventory export is avail
 
 ```bash
 python scripts/build_photo_manifest.py
+```
+
+Initialize or refresh photo-backed observation rows while preserving reviewed fields:
+
+```bash
+python scripts/build_observation_backfill.py
 ```
 
 Export sample sites with coordinates to GeoJSON:

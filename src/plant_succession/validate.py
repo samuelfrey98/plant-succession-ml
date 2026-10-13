@@ -310,11 +310,12 @@ def validate_dataset(data_dir: Path, schema_dir: Path) -> list[ValidationIssue]:
 
 
 def validate_public_photo_data(public_dir: Path, schema_dir: Path) -> list[ValidationIssue]:
-    """Validate the sanitized site registry, photo manifest, and upload summary."""
+    """Validate sanitized longitudinal metadata derived from the photo archive."""
 
     issues: list[ValidationIssue] = []
     required_files = {
         "site_registry": public_dir / "site_registry.csv",
+        "observations": public_dir / "observations.csv",
         "photo_manifest": public_dir / "photo_manifest.csv",
         "photo_batch_summary": public_dir / "photo_batch_summary.csv",
     }
@@ -325,17 +326,24 @@ def validate_public_photo_data(public_dir: Path, schema_dir: Path) -> list[Valid
         return issues
 
     site_rows = read_csv(required_files["site_registry"])
+    observation_rows = read_csv(required_files["observations"])
     photo_rows = read_csv(required_files["photo_manifest"])
     summary_rows = read_csv(required_files["photo_batch_summary"])
-    tables = {"site_registry": site_rows, "photo_manifest": photo_rows}
+    tables = {
+        "site_registry": site_rows,
+        "observations": observation_rows,
+        "photo_manifest": photo_rows,
+    }
 
-    for table in ("site_registry", "photo_manifest"):
+    for table in ("site_registry", "observations", "photo_manifest"):
         path = required_files[table]
         schema = read_csv(schema_dir / SCHEMA_FILES[table])
         issues.extend(validate_table(table, tables[table], read_headers(path), schema))
 
     issues.extend(validate_site_references(tables))
+    issues.extend(validate_observation_content(observation_rows))
     issues.extend(validate_unique_values("site_registry", site_rows, "site_id"))
+    issues.extend(validate_unique_values("observations", observation_rows, "observation_id"))
     issues.extend(validate_unique_values("photo_manifest", photo_rows, "photo_id"))
     issues.extend(validate_unique_values("photo_manifest", photo_rows, "relative_path"))
 
@@ -352,6 +360,7 @@ def validate_public_photo_data(public_dir: Path, schema_dir: Path) -> list[Valid
         )
 
     manifest_counts: Counter[tuple[str, str]] = Counter()
+    manifest_observation_counts: Counter[str] = Counter()
     for index, row in enumerate(photo_rows):
         site_id = row.get("site_id", "").strip()
         observation_date = row.get("observation_date", "").strip()
@@ -401,6 +410,63 @@ def validate_public_photo_data(public_dir: Path, schema_dir: Path) -> list[Valid
                 )
             )
         manifest_counts[(site_id, observation_date)] += 1
+        manifest_observation_counts[observation_id] += 1
+
+    known_observation_ids = {
+        row.get("observation_id", "").strip() for row in observation_rows
+    }
+    for observation_id in sorted(set(manifest_observation_counts) - known_observation_ids):
+        issues.append(
+            ValidationIssue(
+                "photo_manifest",
+                None,
+                "observation_id",
+                f"unknown observation_id '{observation_id}'",
+            )
+        )
+
+    for index, row in enumerate(observation_rows):
+        site_id = row.get("site_id", "").strip()
+        observation_date = row.get("observation_date", "").strip()
+        observation_id = row.get("observation_id", "").strip()
+        if row.get("record_origin", "").strip() == "photo_archive_backfill":
+            try:
+                expected_id = f"site_{int(site_id):02d}_{observation_date.replace('-', '_')}"
+            except ValueError:
+                expected_id = ""
+            if expected_id and observation_id != expected_id:
+                issues.append(
+                    ValidationIssue(
+                        "observations",
+                        row_number(index),
+                        "observation_id",
+                        f"expected '{expected_id}' for photo-backed site/date",
+                    )
+                )
+            try:
+                declared_count = int(row.get("source_photo_count", ""))
+                if declared_count <= 0:
+                    raise ValueError
+            except ValueError:
+                declared_count = -1
+                issues.append(
+                    ValidationIssue(
+                        "observations",
+                        row_number(index),
+                        "source_photo_count",
+                        "must be a positive integer for photo-backed rows",
+                    )
+                )
+            actual_count = manifest_observation_counts.get(observation_id, 0)
+            if declared_count != actual_count:
+                issues.append(
+                    ValidationIssue(
+                        "observations",
+                        row_number(index),
+                        "source_photo_count",
+                        f"declares {declared_count}; manifest contains {actual_count}",
+                    )
+                )
 
     summary_headers = set(read_headers(required_files["photo_batch_summary"]))
     expected_summary_headers = {
