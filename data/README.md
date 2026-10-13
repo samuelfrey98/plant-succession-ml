@@ -2,10 +2,13 @@
 
 This directory separates public sample data from private or raw project data.
 
-- `sample/`: small sanitized example CSVs suitable for GitHub
+- `sample/`: small sanitized example CSVs used by the original scaffold
+- `public/`: sanitized metadata derived from the real monitoring archive
 - `schema/`: schema CSVs and allowed values
-- `raw/`: private raw exports and raw photos; ignored by Git
+- `raw/`: private source exports and Drive inventories; ignored by Git
 - `processed/`: processed private outputs; ignored by Git
 
-Do not commit raw field photos, exact private coordinates, credentials, or full Drive exports unless they have been intentionally sanitized for public release.
+The public photo manifest intentionally omits Drive IDs and private links. Photo roles remain
+`unclassified` until visual review; camera sequence alone is not treated as evidence of photo type.
 
+Do not commit raw field photos, exact private coordinates, credentials, or full Drive exports unless they have been intentionally sanitized for public release.

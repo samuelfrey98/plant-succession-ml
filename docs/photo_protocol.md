@@ -75,6 +75,13 @@ Advantages:
 
 Raw photos should stay out of GitHub unless intentionally compressed, anonymized, and selected as examples.
 
+## Manifest Classification Rule
+
+Original camera filenames and folder placement are preserved as source metadata. Capture order can help
+with review, but it is not sufficient to label a photo as `wide`, `quadrat`, `close_up`,
+`context_left`, or `context_right`. New manifest rows remain `unclassified` until the image is
+visually checked. Original files are never renamed or overwritten by the manifest-building step.
+
 ## Protocol Photo Examples
 
 Annotated protocol screenshots are available in [protocol_photos/](protocol_photos/). These are compressed documentation copies that show standing locations, gridline alignment, visual landmarks, and context-photo framing.

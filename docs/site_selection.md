@@ -27,7 +27,8 @@ Sites can still be useful, but may be harder to analyze if they are:
 
 ## Current Site Set
 
-The current project has 10 mapped monitoring sites. Site labels and metadata remain provisional until the site registry is locked.
+The current project has 11 monitoring sites. Site 11 was added later in the monitoring period after a
+sensitive-fern patch was found on a hillside subject to intermittent digging disturbance.
 
 Working site names include:
 
@@ -35,6 +36,12 @@ Working site names include:
 - Site 2: Mugwort-Dominated Edge
 - Site 3: Gravel-Fill Colonization
 - Site 4: Rocky Slope, Colonization Experiment
+- Site 5: Mowed, Knotweed-Adjacent Patch
+- Site 6: Knotweed and Carrots
+- Site 7: Mowed Field Edge
+- Site 8: Mugwort-Surrounded Patch
+- Site 9: Wood-Chip Recolonization
+- Site 10: Exposed Subsoil
+- Site 11: Sensitive Fern Disturbance Slope
 
 Exact coordinates and sensitive site details should be reviewed before any public release.
-
