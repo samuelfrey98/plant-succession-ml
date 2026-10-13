@@ -23,10 +23,23 @@ Current implemented assets:
 - A 62-row observation table derived from photo-backed site visits, with explicit provenance
 - A 63-row upload-batch summary that preserves an empty Site 3 visit folder as an explicit issue
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
+- A private Google Sheets review workbook synchronized with the public CSV structure
+- The first visually reviewed observation batch, with verified photo roles and uncertainty-aware cover estimates
 - Planned observation ingestion, analysis-ready joins, and longitudinal figures
 
 The project does not yet include a trained machine-learning model. Photo roles are deliberately marked
 `unclassified` until visual review; camera order is not treated as a reliable label.
+
+## Review Workflow
+
+The repository CSVs are the versioned, sanitized public record. A private Google Sheets workbook named
+`Plant Succession ML - Data Review` mirrors those tables so photo-backed observations can be reviewed
+and corrected without exposing Drive links or exact coordinates in GitHub.
+
+Reviews are completed one site/date batch at a time. Photo roles are assigned only after visual
+inspection, ecological values are recorded as rounded post-hoc estimates when the images support them,
+and uncertain taxa remain blank or use an explicitly uncertain label. See
+[docs/data_review_workflow.md](docs/data_review_workflow.md) for the synchronization rules.
 
 ## Research Question
 

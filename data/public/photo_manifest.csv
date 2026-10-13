@@ -1,13 +1,13 @@
 photo_id,observation_id,site_id,observation_date,photo_type,source_filename,relative_path,file_size_bytes,classification_status,notes
-site_01_2026_05_25_close_4699cf4c,site_01_2026_05_25,1,2026-05-25,unclassified,close.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_close_4699cf4c.heic,5492785,pending_visual_review,
-site_01_2026_05_25_close_baaa261f,site_01_2026_05_25,1,2026-05-25,unclassified,close.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_close_baaa261f.heic,6439919,pending_visual_review,
-site_01_2026_05_25_close_c3f51815,site_01_2026_05_25,1,2026-05-25,unclassified,close.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_close_c3f51815.heic,6679729,pending_visual_review,
-site_01_2026_05_25_close_1d8b9bca,site_01_2026_05_25,1,2026-05-25,unclassified,close.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_close_1d8b9bca.heic,6499171,pending_visual_review,
-site_01_2026_05_25_close_8dc40ee6,site_01_2026_05_25,1,2026-05-25,unclassified,close.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_close_8dc40ee6.heic,5596580,pending_visual_review,
-site_01_2026_05_25_left,site_01_2026_05_25,1,2026-05-25,unclassified,left.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_left.heic,4545586,pending_visual_review,
-site_01_2026_05_25_quadrat,site_01_2026_05_25,1,2026-05-25,unclassified,quadrat.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_quadrat.heic,7373427,pending_visual_review,
-site_01_2026_05_25_right,site_01_2026_05_25,1,2026-05-25,unclassified,right.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_right.heic,5332354,pending_visual_review,
-site_01_2026_05_25_wide,site_01_2026_05_25,1,2026-05-25,unclassified,wide.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_wide.heic,4603017,pending_visual_review,
+site_01_2026_05_25_close_4699cf4c,site_01_2026_05_25,1,2026-05-25,close_up,close.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_close_4699cf4c.heic,5492785,verified,Photo role verified by visual review in Google Drive.
+site_01_2026_05_25_close_baaa261f,site_01_2026_05_25,1,2026-05-25,close_up,close.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_close_baaa261f.heic,6439919,verified,Photo role verified by visual review in Google Drive.
+site_01_2026_05_25_close_c3f51815,site_01_2026_05_25,1,2026-05-25,close_up,close.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_close_c3f51815.heic,6679729,verified,Photo role verified by visual review in Google Drive.
+site_01_2026_05_25_close_1d8b9bca,site_01_2026_05_25,1,2026-05-25,close_up,close.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_close_1d8b9bca.heic,6499171,verified,Photo role verified by visual review in Google Drive.
+site_01_2026_05_25_close_8dc40ee6,site_01_2026_05_25,1,2026-05-25,close_up,close.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_close_8dc40ee6.heic,5596580,verified,Photo role verified by visual review in Google Drive.
+site_01_2026_05_25_left,site_01_2026_05_25,1,2026-05-25,context_left,left.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_left.heic,4545586,verified,Photo role verified by visual review in Google Drive.
+site_01_2026_05_25_quadrat,site_01_2026_05_25,1,2026-05-25,quadrat,quadrat.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_quadrat.heic,7373427,verified,Photo role verified by visual review in Google Drive.
+site_01_2026_05_25_right,site_01_2026_05_25,1,2026-05-25,context_right,right.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_right.heic,5332354,verified,Photo role verified by visual review in Google Drive.
+site_01_2026_05_25_wide,site_01_2026_05_25,1,2026-05-25,wide,wide.HEIC,photos/site_01/2026-05-25/site_01_2026-05-25_wide.heic,4603017,verified,Photo role verified by visual review in Google Drive.
 site_01_2026_06_01_img_3292,site_01_2026_06_01,1,2026-06-01,unclassified,IMG_3292.HEIC,photos/site_01/2026-06-01/site_01_2026-06-01_img_3292.heic,4116126,pending_visual_review,
 site_01_2026_06_01_img_3293,site_01_2026_06_01,1,2026-06-01,unclassified,IMG_3293.HEIC,photos/site_01/2026-06-01/site_01_2026-06-01_img_3293.heic,6898959,pending_visual_review,
 site_01_2026_06_01_img_3294,site_01_2026_06_01,1,2026-06-01,unclassified,IMG_3294.HEIC,photos/site_01/2026-06-01/site_01_2026-06-01_img_3294.heic,6068864,pending_visual_review,
