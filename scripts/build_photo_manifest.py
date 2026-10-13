@@ -34,6 +34,7 @@ MANIFEST_FIELDS = [
 ]
 
 SUMMARY_FIELDS = ["site_id", "observation_date", "photo_count", "upload_status"]
+REVIEW_FIELDS = {"photo_type", "classification_status", "notes"}
 
 
 def read_rows(path: Path) -> list[dict[str, str]]:
@@ -69,7 +70,30 @@ def filename_token(filename: str) -> str:
     return token or "photo"
 
 
-def build_manifest(rows: list[dict[str, str]]) -> list[dict[str, object]]:
+def existing_manifest(path: Path) -> dict[str, dict[str, str]]:
+    if not path.exists():
+        return {}
+    rows = read_rows(path)
+    counts = Counter(row.get("photo_id", "").strip() for row in rows)
+    duplicates = sorted(key for key, count in counts.items() if key and count > 1)
+    if duplicates:
+        raise ValueError(f"Existing manifest has duplicate photo IDs: {', '.join(duplicates)}")
+    return {row["photo_id"].strip(): row for row in rows}
+
+
+def has_review_data(row: dict[str, str]) -> bool:
+    return (
+        row.get("photo_type", "").strip() not in {"", "unclassified"}
+        or row.get("classification_status", "").strip()
+        not in {"", "pending_visual_review"}
+        or bool(row.get("notes", "").strip())
+    )
+
+
+def build_manifest(
+    rows: list[dict[str, str]],
+    prior_by_id: dict[str, dict[str, str]] | None = None,
+) -> list[dict[str, object]]:
     required = {
         "drive_file_id",
         "source_site_folder",
@@ -92,6 +116,7 @@ def build_manifest(rows: list[dict[str, str]]) -> list[dict[str, object]]:
         observation_date = parse_date(row["source_date_folder"])
         grouped.setdefault((site_id, observation_date), []).append(row)
 
+    prior_by_id = prior_by_id or {}
     output: list[dict[str, object]] = []
     for (site_id, observation_date), batch in sorted(grouped.items()):
         observation_token = f"site_{site_id:02d}_{observation_date.replace('-', '_')}"
@@ -110,22 +135,25 @@ def build_manifest(rows: list[dict[str, str]]) -> list[dict[str, object]]:
             except ValueError as exc:
                 raise ValueError(f"Invalid file size for {source_filename}") from exc
 
-            output.append(
-                {
-                    "photo_id": photo_token,
-                    "observation_id": observation_token,
-                    "site_id": site_id,
-                    "observation_date": observation_date,
-                    "photo_type": "unclassified",
-                    "source_filename": source_filename,
-                    "relative_path": (
-                        f"photos/site_{site_id:02d}/{observation_date}/{normalized_name}"
-                    ),
-                    "file_size_bytes": file_size_bytes,
-                    "classification_status": "pending_visual_review",
-                    "notes": "",
-                }
-            )
+            manifest_row: dict[str, object] = {
+                "photo_id": photo_token,
+                "observation_id": observation_token,
+                "site_id": site_id,
+                "observation_date": observation_date,
+                "photo_type": "unclassified",
+                "source_filename": source_filename,
+                "relative_path": (
+                    f"photos/site_{site_id:02d}/{observation_date}/{normalized_name}"
+                ),
+                "file_size_bytes": file_size_bytes,
+                "classification_status": "pending_visual_review",
+                "notes": "",
+            }
+            prior = prior_by_id.get(photo_token, {})
+            for field in REVIEW_FIELDS:
+                if prior.get(field, "").strip():
+                    manifest_row[field] = prior[field]
+            output.append(manifest_row)
     return output
 
 
@@ -160,16 +188,23 @@ def main() -> int:
     parser.add_argument("--summary-output", type=Path, default=DEFAULT_SUMMARY)
     args = parser.parse_args()
 
-    manifest = build_manifest(read_rows(args.inventory))
+    prior_by_id = existing_manifest(args.manifest_output)
+    manifest = build_manifest(read_rows(args.inventory), prior_by_id)
     summary = build_summary(read_rows(args.folders))
     write_rows(args.manifest_output, MANIFEST_FIELDS, manifest)
     write_rows(args.summary_output, SUMMARY_FIELDS, summary)
 
     batch_count = len({(row["site_id"], row["observation_date"]) for row in manifest})
     empty_count = sum(row["upload_status"] == "empty_folder" for row in summary)
+    preserved_review_count = sum(
+        row["photo_id"] in prior_by_id
+        and has_review_data(prior_by_id[row["photo_id"]])
+        for row in manifest
+    )
     print(
         f"Wrote {len(manifest)} photos across {batch_count} non-empty batches; "
-        f"{empty_count} empty folder(s) recorded."
+        f"{empty_count} empty folder(s) recorded; "
+        f"{preserved_review_count} existing review row(s) preserved."
     )
     return 0
 

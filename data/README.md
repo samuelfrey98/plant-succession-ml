@@ -10,9 +10,16 @@ This directory separates public sample data from private or raw project data.
 
 The public photo manifest intentionally omits Drive IDs and private links. Photo roles remain
 `unclassified` until visual review; camera sequence alone is not treated as evidence of photo type.
+Re-running `scripts/build_photo_manifest.py` preserves populated visual-review fields by stable
+`photo_id` while refreshing source-derived metadata.
 
 `public/observations.csv` contains one deterministic observation shell per non-empty site/date
 photo batch. These rows are marked `photo_archive_backfill` and remain pending until their photos
 are reviewed. Re-running `scripts/build_observation_backfill.py` preserves populated review fields.
+
+The private Google Sheets workbook `Plant Succession ML - Data Review` is the editable review surface.
+The CSVs in `public/` are the reviewed, sanitized snapshots that belong under version control. Keep the
+two representations synchronized by observation or photo batch, and never copy private Drive links or
+exact coordinates into the public files.
 
 Do not commit raw field photos, exact private coordinates, credentials, or full Drive exports unless they have been intentionally sanitized for public release.
