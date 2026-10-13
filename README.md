@@ -24,7 +24,7 @@ Current implemented assets:
 - A 63-row upload-batch summary that preserves an empty Site 3 visit folder as an explicit issue
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
 - A private Google Sheets review workbook synchronized with the public CSV structure
-- The first visually reviewed observation batch, with verified photo roles and uncertainty-aware cover estimates
+- Two visually reviewed Site 1 batches, with verified photo roles and uncertainty-aware cover estimates
 - Planned observation ingestion, analysis-ready joins, and longitudinal figures
 
 The project does not yet include a trained machine-learning model. Photo roles are deliberately marked
