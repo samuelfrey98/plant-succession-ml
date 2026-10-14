@@ -7,7 +7,7 @@ The pipeline converts a real archive of repeatable field photography into saniti
 photo-backed observation records, validation results, and reproducible longitudinal outputs. The image
 archive can support later computer-vision experiments, but the current portfolio focus is data engineering.
 
-**11 sites | 63 visit folders | 63 photo-backed observations (18 reviewed) | 505 field photos | May 25-July 20, 2026**
+**11 sites | 63 visit folders | 63 photo-backed observations (24 review-completed) | 505 field photos | May 25-July 20, 2026**
 
 ## Project Status
 
@@ -27,9 +27,9 @@ Current implemented assets:
 - A 63-row upload-batch summary used to audit completeness independently of observation content
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
 - A private Google Sheets review workbook synchronized with the public CSV structure
-- Complete six-round reviews for Sites 1-3, with 156 verified photo roles and uncertainty-aware cover estimates
+- Complete six-round reviews for Sites 1-4, with 192 verified photo roles and uncertainty-aware cover estimates
 - A reproducible analysis-ready join with explicit completeness and longitudinal fields
-- Generated cover-change figures for the completed Site 1-3 sequences
+- Generated cover-change figures for the completed Site 1-4 sequences
 
 The project does not yet include a trained machine-learning model. Photo roles are deliberately marked
 `unclassified` until visual review; camera order is not treated as a reliable label.
@@ -41,8 +41,8 @@ The project does not yet include a trained machine-learning model. Photo roles a
 Site 1 now has six reviewed observations spanning May 25 through July 20. The photo-backed estimates
 show two substantial decreases in live vegetation cover followed by recovery. The images are consistent
 with mowing or clearing, but the repository does not promote those visual clues to confirmed disturbance
-events without independent evidence. This is the first completed sequence; the remaining observation
-shells preserve missing values until their photos are reviewed.
+events without independent evidence. Unreviewed observation shells preserve missing values until their
+photos support a defensible estimate.
 
 ![Site 2 cover estimates across six monitoring rounds](outputs/figures/site_02_cover_over_time.png)
 
@@ -56,6 +56,13 @@ Site 3 follows colonization of coarse construction gravel. Vegetation remains co
 fence and trail margins but increases from an estimated 25% to 55% cover across the six rounds. A
 prominent mugwort-like taxon is recorded as `Artemisia vulgaris` with `likely` confidence; the estimate
 is not expert-verified, and no disturbance event is inferred from the sequence.
+
+![Site 4 cover estimates across six monitoring rounds](outputs/figures/site_04_cover_over_time.png)
+
+Site 4 tracks a newly installed gravel strip beside a fenced industrial property. Live vegetation remains
+sparse but rises from an estimated 1% to 4% across six rounds while coarse aggregate remains the dominant
+surface. Recurring plants are represented with stable morphotype labels because the photos do not support
+confident species-level identification; no discrete disturbance is visible.
 
 ## Review Workflow
 
@@ -165,7 +172,7 @@ field_name,data_type,required,allowed_values,description,example
 ## Current Limitations
 
 - Species identifications are field estimates and are not expert-verified unless stated.
-- Fifty photo-backed observation shells still await visual review.
+- Thirty-nine photo-backed observation shells still await visual review.
 - Photo workflows are being revised because Google Forms file uploads can be awkward for large iPhone images.
 - Successional-stage labels are interpretive and should not replace raw cover and taxon fields.
 - No trained ML model is included yet.
