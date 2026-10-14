@@ -7,7 +7,7 @@ The pipeline converts a real archive of repeatable field photography into saniti
 photo-backed observation records, validation results, and reproducible longitudinal outputs. The image
 archive can support later computer-vision experiments, but the current portfolio focus is data engineering.
 
-**11 sites | 63 visit folders | 62 photo-backed observations | 497 field photos | May 25-July 20, 2026**
+**11 sites | 63 visit folders | 62 photo-backed observations (12 reviewed) | 497 field photos | May 25-July 20, 2026**
 
 ## Project Status
 
@@ -27,9 +27,9 @@ Current implemented assets:
 - A 63-row upload-batch summary that preserves an empty Site 3 visit folder as an explicit issue
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
 - A private Google Sheets review workbook synchronized with the public CSV structure
-- A complete six-round Site 1 review, with 50 verified photo roles and uncertainty-aware cover estimates
+- Complete six-round reviews for Sites 1 and 2, with 102 verified photo roles and uncertainty-aware cover estimates
 - A reproducible analysis-ready join with explicit completeness and longitudinal fields
-- A generated Site 1 cover-change figure based on the reviewed photo sequence
+- Generated cover-change figures for the completed Site 1 and Site 2 sequences
 
 The project does not yet include a trained machine-learning model. Photo roles are deliberately marked
 `unclassified` until visual review; camera order is not treated as a reliable label.
@@ -43,6 +43,12 @@ show two substantial decreases in live vegetation cover followed by recovery. Th
 with mowing or clearing, but the repository does not promote those visual clues to confirmed disturbance
 events without independent evidence. This is the first completed sequence; the remaining observation
 shells preserve missing values until their photos are reviewed.
+
+![Site 2 cover estimates across six monitoring rounds](outputs/figures/site_02_cover_over_time.png)
+
+Site 2 provides a contrasting sequence: a mugwort-dominated roadside edge progresses toward nearly
+continuous herbaceous cover. The June 1 dip may partly reflect quadrat framing, so it remains a descriptive
+estimate rather than evidence of a disturbance event.
 
 ## Review Workflow
 
@@ -152,7 +158,7 @@ field_name,data_type,required,allowed_values,description,example
 ## Current Limitations
 
 - Species identifications are field estimates and are not expert-verified unless stated.
-- Fifty-six photo-backed observation shells still await visual review.
+- Fifty photo-backed observation shells still await visual review.
 - Photo workflows are being revised because Google Forms file uploads can be awkward for large iPhone images.
 - Successional-stage labels are interpretive and should not replace raw cover and taxon fields.
 - No trained ML model is included yet.
