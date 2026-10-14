@@ -193,6 +193,12 @@ def build_cover_figure(table: pd.DataFrame, output_path: Path, site_id: str = "1
     ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
     ax.set_xticks(site_rows["observation_date"])
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
+    plt.setp(
+        ax.get_xticklabels(),
+        rotation=30,
+        ha="right",
+        rotation_mode="anchor",
+    )
     ax.tick_params(axis="both", colors="#475467", labelsize=10)
     ax.grid(axis="y", color="#D0D5DD", linewidth=0.8, alpha=0.75)
     ax.grid(axis="x", visible=False)
