@@ -1,8 +1,11 @@
 # Plant Succession ML Project
 
-Field-data infrastructure for tracking plant succession, disturbance response, and vegetation change across disturbed urban edge habitats in Phoenixville, Pennsylvania.
+An independent longitudinal field-data engineering project tracking vegetation change across disturbed
+urban edge habitats in Phoenixville, Pennsylvania.
 
-This project combines repeatable field photography, structured observation forms, disturbance-event logging, and geospatial site tracking to build a small longitudinal dataset for later ecological analysis and computer-vision experiments.
+The pipeline converts a real archive of repeatable field photography into sanitized relational tables,
+photo-backed observation records, validation results, and reproducible longitudinal outputs. The image
+archive can support later computer-vision experiments, but the current portfolio focus is data engineering.
 
 **11 sites | 63 visit folders | 62 photo-backed observations | 497 field photos | May 25-July 20, 2026**
 
@@ -24,11 +27,22 @@ Current implemented assets:
 - A 63-row upload-batch summary that preserves an empty Site 3 visit folder as an explicit issue
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
 - A private Google Sheets review workbook synchronized with the public CSV structure
-- Two visually reviewed Site 1 batches, with verified photo roles and uncertainty-aware cover estimates
-- Planned observation ingestion, analysis-ready joins, and longitudinal figures
+- A complete six-round Site 1 review, with 50 verified photo roles and uncertainty-aware cover estimates
+- A reproducible analysis-ready join with explicit completeness and longitudinal fields
+- A generated Site 1 cover-change figure based on the reviewed photo sequence
 
 The project does not yet include a trained machine-learning model. Photo roles are deliberately marked
 `unclassified` until visual review; camera order is not treated as a reliable label.
+
+## First Longitudinal Result
+
+![Site 1 cover estimates across six monitoring rounds](outputs/figures/site_01_cover_over_time.png)
+
+Site 1 now has six reviewed observations spanning May 25 through July 20. The photo-backed estimates
+show two substantial decreases in live vegetation cover followed by recovery. The images are consistent
+with mowing or clearing, but the repository does not promote those visual clues to confirmed disturbance
+events without independent evidence. This is the first completed sequence; the remaining observation
+shells preserve missing values until their photos are reviewed.
 
 ## Review Workflow
 
@@ -58,10 +72,13 @@ Secondary questions:
 The project currently uses:
 
 - Google My Maps / Google Earth site pins
-- Google Forms observation submissions
-- Google Sheets tables for site registry, observations, and disturbance events
-- Google Drive folders for field photos
-- Manual field notes and visual percent-cover estimates
+- Google Drive folders containing the original field-photo archive
+- A private Google Sheets workbook used for visual review and correction
+- Sanitized CSV snapshots for sites, observations, disturbance events, and photo metadata
+- Post-hoc visual percent-cover estimates where the archived photos support them
+
+Google Forms was the original collection design, but bulk photo uploads proved too slow in practice. The
+real dataset is therefore reconstructed from the Drive archive with explicit provenance and missingness.
 
 Raw photos, private Drive exports, and exact site data should not be committed directly to this public repository unless intentionally sanitized.
 
@@ -102,6 +119,7 @@ plant-succession-ml/
     ml_roadmap.md
     portfolio_notes.md
   data/
+    public/
     sample/
     schema/
     raw/
@@ -134,7 +152,7 @@ field_name,data_type,required,allowed_values,description,example
 ## Current Limitations
 
 - Species identifications are field estimates and are not expert-verified unless stated.
-- The dataset is small and still being designed.
+- Fifty-six photo-backed observation shells still await visual review.
 - Photo workflows are being revised because Google Forms file uploads can be awkward for large iPhone images.
 - Successional-stage labels are interpretive and should not replace raw cover and taxon fields.
 - No trained ML model is included yet.
@@ -165,7 +183,7 @@ Install dependencies:
 python -m pip install -r requirements.txt
 ```
 
-Validate the sample data:
+Validate the sample and public data:
 
 ```bash
 python scripts/validate_csvs.py
@@ -181,6 +199,12 @@ Initialize or refresh photo-backed observation rows while preserving reviewed fi
 
 ```bash
 python scripts/build_observation_backfill.py
+```
+
+Build the analysis-ready public table and Site 1 longitudinal figure:
+
+```bash
+python scripts/build_longitudinal_outputs.py
 ```
 
 Export sample sites with coordinates to GeoJSON:
