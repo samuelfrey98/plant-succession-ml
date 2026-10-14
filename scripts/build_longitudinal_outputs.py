@@ -219,7 +219,7 @@ def build_cover_figure(table: pd.DataFrame, output_path: Path, site_id: str = "1
     fig.text(
         0.08,
         0.91,
-        "Six photo-backed monitoring rounds show repeated cover loss and recovery.",
+        f"Photo-backed cover estimates across {len(site_rows)} monitoring rounds.",
         ha="left",
         fontsize=11,
         color="#475467",
@@ -228,7 +228,7 @@ def build_cover_figure(table: pd.DataFrame, output_path: Path, site_id: str = "1
         0.08,
         0.025,
         "Post-hoc visual estimates from archived quadrat and context photos. "
-        "Cover decreases are descriptive; disturbance events are not independently confirmed.",
+        "Changes are descriptive; disturbance events are not independently confirmed.",
         ha="left",
         fontsize=8.5,
         color="#667085",
