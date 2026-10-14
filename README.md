@@ -7,7 +7,7 @@ The pipeline converts a real archive of repeatable field photography into saniti
 photo-backed observation records, validation results, and reproducible longitudinal outputs. The image
 archive can support later computer-vision experiments, but the current portfolio focus is data engineering.
 
-**11 sites | 63 visit folders | 62 photo-backed observations (12 reviewed) | 497 field photos | May 25-July 20, 2026**
+**11 sites | 63 visit folders | 63 photo-backed observations (18 reviewed) | 505 field photos | May 25-July 20, 2026**
 
 ## Project Status
 
@@ -22,19 +22,19 @@ Current implemented assets:
 - A Google Sheets workbook with site, observation, and disturbance-event tables
 - Repeatable photo protocols for wide, quadrat, close-up, and context photos
 - Initial schema design for ecological observations and disturbance history
-- A sanitized 497-row photo manifest with deterministic IDs and logical archive paths
-- A 62-row observation table derived from photo-backed site visits, with explicit provenance
-- A 63-row upload-batch summary that preserves an empty Site 3 visit folder as an explicit issue
+- A sanitized 505-row photo manifest with deterministic IDs and logical archive paths
+- A 63-row observation table derived from photo-backed site visits, with explicit provenance
+- A 63-row upload-batch summary used to audit completeness independently of observation content
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
 - A private Google Sheets review workbook synchronized with the public CSV structure
-- Complete six-round reviews for Sites 1 and 2, with 102 verified photo roles and uncertainty-aware cover estimates
+- Complete six-round reviews for Sites 1-3, with 156 verified photo roles and uncertainty-aware cover estimates
 - A reproducible analysis-ready join with explicit completeness and longitudinal fields
-- Generated cover-change figures for the completed Site 1 and Site 2 sequences
+- Generated cover-change figures for the completed Site 1-3 sequences
 
 The project does not yet include a trained machine-learning model. Photo roles are deliberately marked
 `unclassified` until visual review; camera order is not treated as a reliable label.
 
-## First Longitudinal Result
+## Longitudinal Results
 
 ![Site 1 cover estimates across six monitoring rounds](outputs/figures/site_01_cover_over_time.png)
 
@@ -49,6 +49,13 @@ shells preserve missing values until their photos are reviewed.
 Site 2 provides a contrasting sequence: a mugwort-dominated roadside edge progresses toward nearly
 continuous herbaceous cover. The June 1 dip may partly reflect quadrat framing, so it remains a descriptive
 estimate rather than evidence of a disturbance event.
+
+![Site 3 cover estimates across six monitoring rounds](outputs/figures/site_03_cover_over_time.png)
+
+Site 3 follows colonization of coarse construction gravel. Vegetation remains concentrated along the
+fence and trail margins but increases from an estimated 25% to 55% cover across the six rounds. A
+prominent mugwort-like taxon is recorded as `Artemisia vulgaris` with `likely` confidence; the estimate
+is not expert-verified, and no disturbance event is inferred from the sequence.
 
 ## Review Workflow
 
