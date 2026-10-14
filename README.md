@@ -7,7 +7,7 @@ The pipeline converts a real archive of repeatable field photography into saniti
 photo-backed observation records, validation results, and reproducible longitudinal outputs. The image
 archive can support later computer-vision experiments, but the current portfolio focus is data engineering.
 
-**11 sites | 63 visit folders | 63 photo-backed observations (24 review-completed) | 505 field photos | May 25-July 20, 2026**
+**11 sites | 63 visit folders | 63 photo-backed observations (31 review-completed) | 505 field photos | May 25-July 20, 2026**
 
 ## Project Status
 
@@ -27,9 +27,9 @@ Current implemented assets:
 - A 63-row upload-batch summary used to audit completeness independently of observation content
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
 - A private Google Sheets review workbook synchronized with the public CSV structure
-- Complete six-round reviews for Sites 1-4, with 192 verified photo roles and uncertainty-aware cover estimates
+- Completed reviews for Sites 1-5, with 238 verified photo roles and uncertainty-aware cover estimates
 - A reproducible analysis-ready join with explicit completeness and longitudinal fields
-- Generated cover-change figures for the completed Site 1-4 sequences
+- Generated cover-change figures for the completed Site 1-5 sequences
 
 The project does not yet include a trained machine-learning model. Photo roles are deliberately marked
 `unclassified` until visual review; camera order is not treated as a reliable label.
@@ -63,6 +63,13 @@ Site 4 tracks a newly installed gravel strip beside a fenced industrial property
 sparse but rises from an estimated 1% to 4% across six rounds while coarse aggregate remains the dominant
 surface. Recurring plants are represented with stable morphotype labels because the photos do not support
 confident species-level identification; no discrete disturbance is visible.
+
+![Site 5 cover estimates across seven monitoring rounds](outputs/figures/site_05_cover_over_time.png)
+
+Site 5 contains seven photo-backed visits, including an additional June 3 round. The monitored woodland-edge
+opening remains dominated by a short grass layer, with a July decline followed by partial recovery. Fresh cut
+foliage on June 3 is recorded as evidence consistent with recent mowing, but it is not promoted to a confirmed
+disturbance event without independent support. Uncertain edge plants are retained as stable morphotypes.
 
 ## Review Workflow
 
@@ -172,7 +179,7 @@ field_name,data_type,required,allowed_values,description,example
 ## Current Limitations
 
 - Species identifications are field estimates and are not expert-verified unless stated.
-- Thirty-nine photo-backed observation shells still await visual review.
+- Thirty-two photo-backed observation shells still await visual review.
 - Photo workflows are being revised because Google Forms file uploads can be awkward for large iPhone images.
 - Successional-stage labels are interpretive and should not replace raw cover and taxon fields.
 - No trained ML model is included yet.
