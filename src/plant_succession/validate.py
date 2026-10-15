@@ -268,6 +268,27 @@ def validate_disturbance_windows(rows: list[dict[str, str]]) -> list[ValidationI
     return issues
 
 
+def validate_disturbance_observation_references(
+    disturbance_rows: list[dict[str, str]], observation_rows: list[dict[str, str]]
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    known_observation_ids = {
+        row.get("observation_id", "").strip() for row in observation_rows
+    }
+    for index, row in enumerate(disturbance_rows):
+        observation_id = row.get("related_observation_id", "").strip()
+        if observation_id and observation_id not in known_observation_ids:
+            issues.append(
+                ValidationIssue(
+                    "disturbance_events",
+                    row_number(index),
+                    "related_observation_id",
+                    f"unknown observation_id '{observation_id}'",
+                )
+            )
+    return issues
+
+
 def validate_table(
     table: str,
     rows: list[dict[str, str]],
@@ -319,6 +340,7 @@ def validate_public_photo_data(public_dir: Path, schema_dir: Path) -> list[Valid
         "photo_manifest": public_dir / "photo_manifest.csv",
         "photo_batch_summary": public_dir / "photo_batch_summary.csv",
     }
+    disturbance_path = public_dir / "disturbance_events.csv"
     for table, path in required_files.items():
         if not path.exists():
             issues.append(ValidationIssue(table, None, None, f"missing file: {path}"))
@@ -335,8 +357,13 @@ def validate_public_photo_data(public_dir: Path, schema_dir: Path) -> list[Valid
         "photo_manifest": photo_rows,
     }
 
-    for table in ("site_registry", "observations", "photo_manifest"):
-        path = required_files[table]
+    if disturbance_path.exists():
+        tables["disturbance_events"] = read_csv(disturbance_path)
+
+    for table in ("site_registry", "observations", "disturbance_events", "photo_manifest"):
+        if table not in tables:
+            continue
+        path = disturbance_path if table == "disturbance_events" else required_files[table]
         schema = read_csv(schema_dir / SCHEMA_FILES[table])
         issues.extend(validate_table(table, tables[table], read_headers(path), schema))
 
@@ -346,6 +373,19 @@ def validate_public_photo_data(public_dir: Path, schema_dir: Path) -> list[Valid
     issues.extend(validate_unique_values("observations", observation_rows, "observation_id"))
     issues.extend(validate_unique_values("photo_manifest", photo_rows, "photo_id"))
     issues.extend(validate_unique_values("photo_manifest", photo_rows, "relative_path"))
+    if "disturbance_events" in tables:
+        disturbance_rows = tables["disturbance_events"]
+        issues.extend(
+            validate_unique_values(
+                "disturbance_events", disturbance_rows, "disturbance_event_id"
+            )
+        )
+        issues.extend(validate_disturbance_windows(disturbance_rows))
+        issues.extend(
+            validate_disturbance_observation_references(
+                disturbance_rows, observation_rows
+            )
+        )
 
     private_columns = {"drive_file_id", "drive_file_url", "drive_folder_url"}
     leaked_columns = private_columns.intersection(read_headers(required_files["photo_manifest"]))

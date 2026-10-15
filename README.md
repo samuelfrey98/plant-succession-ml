@@ -7,7 +7,7 @@ The pipeline converts a real archive of repeatable field photography into saniti
 photo-backed observation records, validation results, and reproducible longitudinal outputs. The image
 archive can support later computer-vision experiments, but the current portfolio focus is data engineering.
 
-**11 sites | 63 visit folders | 63 photo-backed observations (31 review-completed) | 505 field photos | May 25-July 20, 2026**
+**11 sites | 63 visit folders | 63 photo-backed observations (38 visually reviewed) | 505 field photos | May 25-July 20, 2026**
 
 ## Project Status
 
@@ -27,9 +27,10 @@ Current implemented assets:
 - A 63-row upload-batch summary used to audit completeness independently of observation content
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
 - A private Google Sheets review workbook synchronized with the public CSV structure
-- Completed reviews for Sites 1-5, with 238 verified photo roles and uncertainty-aware cover estimates
+- Completed visual reviews for Sites 1-6, with 294 verified photo roles and uncertainty-aware cover estimates
+- One photo-evidenced disturbance record with explicit date-window and confidence metadata
 - A reproducible analysis-ready join with explicit completeness and longitudinal fields
-- Generated cover-change figures for the completed Site 1-5 sequences
+- Generated cover-change figures for the completed Site 1-6 sequences
 
 The project does not yet include a trained machine-learning model. Photo roles are deliberately marked
 `unclassified` until visual review; camera order is not treated as a reliable label.
@@ -70,6 +71,14 @@ Site 5 contains seven photo-backed visits, including an additional June 3 round.
 opening remains dominated by a short grass layer, with a July decline followed by partial recovery. Fresh cut
 foliage on June 3 is recorded as evidence consistent with recent mowing, but it is not promoted to a confirmed
 disturbance event without independent support. Uncertain edge plants are retained as stable morphotypes.
+
+![Site 6 cover estimates across seven monitoring rounds](outputs/figures/site_06_cover_over_time.png)
+
+Site 6 follows a dense woodland-edge herb layer across seven photo-backed visits. Archived June 3 images show
+freshly cut stems and leaves plus a 25 percentage-point decline in estimated live cover relative to June 1;
+this is stored as a `likely` mowing event within a bounded date window, not as independently confirmed field
+activity. Cover then recovers steadily to an estimated 95% by July 20. The dominant dissected-leaf plant remains
+a stable morphotype because the photographs do not support a defensible species-level identification.
 
 ## Review Workflow
 
@@ -159,7 +168,7 @@ plant-succession-ml/
 
 ## Schema Overview
 
-The project is organized around three core tables:
+The project is organized around five core tables:
 
 - `site_registry`: one row per monitoring site
 - `observations`: one row per site visit
@@ -179,7 +188,7 @@ field_name,data_type,required,allowed_values,description,example
 ## Current Limitations
 
 - Species identifications are field estimates and are not expert-verified unless stated.
-- Thirty-two photo-backed observation shells still await visual review.
+- Twenty-five photo-backed observation shells still await visual review.
 - Photo workflows are being revised because Google Forms file uploads can be awkward for large iPhone images.
 - Successional-stage labels are interpretive and should not replace raw cover and taxon fields.
 - No trained ML model is included yet.

@@ -1,0 +1,2 @@
+disturbance_event_id,site_id,disturbance_window_start,disturbance_window_end,disturbance_event_type,disturbance_confidence,detailed_event_type,evidence,herbicide_type,herbicide_application_method,related_observation_id,notes
+site_06_2026_06_01_2026_06_03_mowing,6,2026-06-01,2026-06-03,mowing,likely,broad_vegetation_cutback,"Archived June 3 photos show fresh cut stems and leaves plus an abrupt reduction in vegetation height and cover relative to June 1.",,,site_06_2026_06_03,"Timing is inferred between consecutive visits; the cutting method was not independently confirmed."
