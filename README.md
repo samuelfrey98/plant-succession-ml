@@ -7,7 +7,7 @@ The pipeline converts a real archive of repeatable field photography into saniti
 photo-backed observation records, validation results, and reproducible longitudinal outputs. The image
 archive can support later computer-vision experiments, but the current portfolio focus is data engineering.
 
-**11 sites | 63 visit folders | 63 photo-backed observations (38 visually reviewed) | 505 field photos | May 25-July 20, 2026**
+**11 sites | 63 visit folders | 63 photo-backed observations (43 visually reviewed) | 505 field photos | May 25-July 20, 2026**
 
 ## Project Status
 
@@ -27,10 +27,10 @@ Current implemented assets:
 - A 63-row upload-batch summary used to audit completeness independently of observation content
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
 - A private Google Sheets review workbook synchronized with the public CSV structure
-- Completed visual reviews for Sites 1-6, with 294 verified photo roles and uncertainty-aware cover estimates
+- Completed visual reviews for Sites 1-7, with 331 verified photo roles and uncertainty-aware cover estimates
 - One photo-evidenced disturbance record with explicit date-window and confidence metadata
 - A reproducible analysis-ready join with explicit completeness and longitudinal fields
-- Generated cover-change figures for the completed Site 1-6 sequences
+- Generated cover-change figures for the completed Site 1-7 sequences
 
 The project does not yet include a trained machine-learning model. Photo roles are deliberately marked
 `unclassified` until visual review; camera order is not treated as a reliable label.
@@ -79,6 +79,13 @@ freshly cut stems and leaves plus a 25 percentage-point decline in estimated liv
 this is stored as a `likely` mowing event within a bounded date window, not as independently confirmed field
 activity. Cover then recovers steadily to an estimated 95% by July 20. The dominant dissected-leaf plant remains
 a stable morphotype because the photographs do not support a defensible species-level identification.
+
+![Site 7 cover estimates across five monitoring rounds](outputs/figures/site_07_cover_over_time.png)
+
+Site 7 follows a mowed field edge across five photo-backed visits. Estimated live cover declines from 70% on
+June 3 to 35% on July 3, then rebounds to 70% by July 20 as grasses expand. Common mullein is retained at
+`likely` confidence, while less certain recurring plants use stable morphotype labels. The photos do not show
+enough evidence to infer a new mowing event during the monitored sequence.
 
 ## Review Workflow
 
