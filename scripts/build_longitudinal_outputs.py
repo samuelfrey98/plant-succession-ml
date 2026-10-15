@@ -45,7 +45,9 @@ def build_analysis_table(
     for column in SURFACE_COVER_COLUMNS:
         if column not in observations:
             observations[column] = pd.NA
-        observations[column] = pd.to_numeric(observations[column], errors="coerce")
+        observations[column] = pd.to_numeric(
+            observations[column], errors="coerce"
+        ).astype("Float64")
 
     photo_counts = photos.groupby("observation_id").size().rename("manifest_photo_count")
     verified_counts = (

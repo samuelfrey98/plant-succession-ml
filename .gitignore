@@ -39,6 +39,7 @@ outputs/maps/*
 !outputs/figures/site_08_cover_over_time.png
 !outputs/figures/site_09_cover_over_time.png
 !outputs/figures/site_10_cover_over_time.png
+!outputs/figures/site_11_cover_over_time.png
 !outputs/maps/.gitkeep
 !outputs/maps/site_registry_sample.geojson
 

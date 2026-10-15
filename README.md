@@ -7,13 +7,13 @@ The pipeline converts a real archive of repeatable field photography into saniti
 photo-backed observation records, validation results, and reproducible longitudinal outputs. The image
 archive can support later computer-vision experiments, but the current portfolio focus is data engineering.
 
-**11 sites | 63 visit folders | 63 photo-backed observations (61 visually reviewed) | 505 field photos | May 25-July 20, 2026**
+**11 sites | 63 visit folders | 63 visually reviewed observations | 505 verified field photos | May 25-July 20, 2026**
 
 ## Project Status
 
 The photo archive has been inventoried and normalized into a public metadata manifest. One
-observation shell is generated for each non-empty site/date photo batch; ecological fields remain
-pending until visual review supports a defensible value.
+observation is generated for each non-empty site/date photo batch, then reviewed against the source
+images before ecological fields and photo roles are published.
 
 Current implemented assets:
 
@@ -27,13 +27,13 @@ Current implemented assets:
 - A 63-row upload-batch summary used to audit completeness independently of observation content
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
 - A private Google Sheets review workbook synchronized with the public CSV structure
-- Completed visual reviews for Sites 1-10, with 489 verified photo roles and uncertainty-aware cover estimates
+- Completed visual reviews for Sites 1-11, with 505 verified photo roles and uncertainty-aware cover estimates
 - One photo-evidenced disturbance record with explicit date-window and confidence metadata
 - A reproducible analysis-ready join with explicit completeness and longitudinal fields
-- Generated cover-change figures for the completed Site 1-10 sequences
+- Generated cover-change figures for the completed Site 1-11 sequences
 
-The project does not yet include a trained machine-learning model. Photo roles are deliberately marked
-`unclassified` until visual review; camera order is not treated as a reliable label.
+The project does not yet include a trained machine-learning model. Camera order is not treated as a
+reliable photo label; all published roles were assigned through visual review.
 
 ## Longitudinal Results
 
@@ -107,6 +107,13 @@ Site 10 follows colonization around a persistently exposed subsoil patch across 
 Estimated live cover rises from 20% to 40%, primarily along the road and woodland margins, while roughly half
 of the monitored surface remains bare by July 20. Recurring plants are retained as stable morphotypes, and the
 sequence does not provide enough evidence to infer a new disturbance event.
+
+![Site 11 cover estimates across two monitoring rounds](outputs/figures/site_11_cover_over_time.png)
+
+Site 11 is a later-established hillside site centered on an exposed soil-and-rubble mound. Across two
+photo-backed visits, estimated live cover rises from 10% to 20% while exposed substrate remains dominant.
+Sensitive fern is retained at `likely` confidence based on the field note and visible fern-like fronds; the
+images do not support dating the earlier soil displacement or inferring a discrete new digging event.
 
 ## Review Workflow
 
@@ -216,7 +223,7 @@ field_name,data_type,required,allowed_values,description,example
 ## Current Limitations
 
 - Species identifications are field estimates and are not expert-verified unless stated.
-- Two photo-backed observation shells still await visual review.
+- Cover values are rounded post-hoc visual estimates rather than measurements made in fixed quadrats.
 - Photo workflows are being revised because Google Forms file uploads can be awkward for large iPhone images.
 - Successional-stage labels are interpretive and should not replace raw cover and taxon fields.
 - No trained ML model is included yet.
