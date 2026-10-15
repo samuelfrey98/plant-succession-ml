@@ -1,0 +1,12 @@
+field_note_id,note_date,note_type,site_scope,related_site_ids,raw_note,source,processing_status,notes
+field_note_2026_06_03_01,2026-06-03,disturbance,multi_site,5;6,I believe sites 5 and 6 were mowed today. Were not mowed yesterday on my walk.,user_provided,normalized,The wording supports a June 2-3 event window but does not establish that the mowing operation itself was witnessed.
+field_note_2026_06_13_01,2026-06-13,disturbance,site_specific,1,Mow event at site 1 between now and last observation.,user_provided,normalized,Window starts at the previous Site 1 observation.
+field_note_2026_06_13_02,2026-06-13,phenology,between_sites,1;2,I saw one mugwort-like plant flowering between sites 1 and 2.,user_provided,normalized,Retained as a between-sites phenology note rather than assigned to either monitoring site.
+field_note_2026_06_13_03,2026-06-13,disturbance,site_specific,2,Mowed at site 2 also. Along this whole road pretty much. Both sides.,user_provided,normalized,Site 2 is explicit; the broader road statement is not expanded to unnamed monitoring sites.
+field_note_2026_06_13_04,2026-06-13,disturbance,site_specific,3,Site 3 seems unmowed.,user_provided,normalized,Normalized as an explicit mowing check with none seen.
+field_note_2026_06_13_05,2026-06-13,disturbance,site_specific,8,Site 8 mowed.,user_provided,normalized,Only Site 8 is asserted by this note.
+field_note_2026_06_24_01,2026-06-24,disturbance,multi_site,1;2;10,"Noticed big mow event near sites 10, 1, 2. I think more cutting has happened since last visit at sites 10, 1, 2.",user_provided,normalized,Two same-date notes were consolidated as one source record and one event per named site.
+field_note_2026_07_20_01,2026-07-20,phenology,route_general,,Looks like flowers of wild carrots are starting to die/get shaggy.,user_provided,normalized,Personal phenology note; not a disturbance and not assigned to a monitoring site.
+field_note_2026_08_05_01,2026-08-05,disturbance,site_specific,10,Spotted treefall near site 10.,user_provided,normalized,Tree fall is linked only to Site 10.
+field_note_2026_08_12_01,2026-08-12,disturbance,multi_site,1;2;10,"Lawn mowed 10, 2, 1 sometime since last time.",user_provided,normalized,The event window starts at the last structured observation for these sites; no conclusion is drawn for other sites.
+field_note_2026_09_09_01,2026-09-09,disturbance,multi_site,1;2;10,"10, 2, 1 mowed since last time.",user_provided,normalized,The previous explicit check for the same three sites was August 12.

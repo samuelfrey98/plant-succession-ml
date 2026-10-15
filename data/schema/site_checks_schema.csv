@@ -1,0 +1,10 @@
+field_name,data_type,required,allowed_values,description,example
+site_check_id,string,yes,,Stable identifier for a site-specific assessment.,site_check_03_2026_06_13_mowing
+field_note_id,string,yes,,Source note that supports the assessment.,field_note_2026_06_13_04
+site_id,int,yes,,Site that was explicitly checked or mentioned.,3
+check_date,date,yes,,Date of the site assessment.,2026-06-13
+visit_context,categorical,yes,structured_observation;incidental_walk;targeted_follow_up;unknown,How the site assessment occurred.,structured_observation
+disturbance_assessment,categorical,yes,observed_event;none_seen;not_assessed,Outcome for the named disturbance type.,none_seen
+disturbance_type_assessed,categorical,yes,mowing;herbicide;construction;soil_disturbance;flooding;pruning;tree_fall;other,Disturbance type evaluated by the note.,mowing
+related_observation_id,string,no,,Same-day structured observation when one exists.,site_03_2026_06_13
+notes,string,no,,Scope and interpretation notes.,Explicit negative check; not evidence about other dates.

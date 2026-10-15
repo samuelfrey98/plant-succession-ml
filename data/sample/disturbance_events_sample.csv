@@ -1,4 +1,4 @@
-disturbance_event_id,site_id,disturbance_window_start,disturbance_window_end,disturbance_event_type,disturbance_confidence,detailed_event_type,evidence,herbicide_type,herbicide_application_method,related_observation_id,notes
-DIST-2026-0001,2,2026-06-07,2026-06-14,mowing,likely,roadside_mowing,Fresh cut stems and increased standing dead material along road edge,,,OBS-2026-0005,Timing inferred between visits.
-DIST-2026-0002,3,2026-06-01,2026-06-07,construction,maybe,fresh_gravel_fill,Fresh gravel and sparse colonization pattern suggest recent fill or grading,,,OBS-2026-0003,Disturbance history needs confirmation.
-DIST-2026-0003,4,2026-06-01,2026-06-07,soil_disturbance,likely,exposed_rocky_soil,Exposed rocky substrate and sparse early herbs visible across slope,,,OBS-2026-0004,Could be older disturbance.
+disturbance_event_id,site_id,disturbance_window_start,disturbance_window_end,disturbance_event_type,disturbance_confidence,detailed_event_type,evidence,herbicide_type,herbicide_application_method,source_field_note_id,site_check_id,related_observation_id,notes
+DIST-2026-0001,2,2026-06-07,2026-06-14,mowing,likely,roadside_mowing,Fresh cut stems and increased standing dead material along road edge,,,field_note_2026_06_14_01,site_check_02_2026_06_14_mowing,OBS-2026-0005,Timing inferred between visits.
+DIST-2026-0002,3,2026-06-01,2026-06-07,construction,maybe,fresh_gravel_fill,Fresh gravel and sparse colonization pattern suggest recent fill or grading,,,,,OBS-2026-0003,Disturbance history needs confirmation.
+DIST-2026-0003,4,2026-06-01,2026-06-07,soil_disturbance,likely,exposed_rocky_soil,Exposed rocky substrate and sparse early herbs visible across slope,,,,,OBS-2026-0004,Could be older disturbance.

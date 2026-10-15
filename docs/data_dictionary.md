@@ -42,10 +42,46 @@ Core fields:
 - `disturbance_event_type`: broad event class
 - `disturbance_confidence`: observed, likely, or maybe
 - `evidence`: field evidence supporting the event
+- `source_field_note_id`: source-note lineage
+- `site_check_id`: site-specific positive assessment supporting the event
+
+## field_notes
+
+One row per preserved source note. This table stores the original wording before it is normalized into
+site-specific checks or disturbance events. Phenology and taxon notes belong here even when they do not
+describe a disturbance.
+
+Core fields:
+
+- `field_note_id`: stable source-note identifier
+- `note_date`: date the note was recorded
+- `note_type`: disturbance, phenology, taxon, or general
+- `site_scope`: site-specific, multi-site, between-sites, or route-general
+- `related_site_ids`: semicolon-separated sites explicitly named or bounded by the note
+- `raw_note`: preserved source wording
+- `processing_status`: normalized, partially normalized, or unresolved
+
+## site_checks
+
+One row per site and disturbance type explicitly assessed by a source note. Positive and negative
+checks use the same structure, but only `observed_event` checks may create disturbance-event rows.
+Unmentioned sites are not checks and remain unknown.
+
+Core fields:
+
+- `site_check_id`: stable assessment identifier
+- `field_note_id`: link to the source note
+- `site_id`: site explicitly assessed
+- `check_date`: date of the assessment
+- `visit_context`: structured observation, incidental walk, targeted follow-up, or unknown
+- `disturbance_assessment`: observed event, none seen, or not assessed
+- `disturbance_type_assessed`: disturbance class evaluated
+- `related_observation_id`: optional same-day structured observation
 
 ## photo_manifest
 
-Optional future table with one row per photo. Useful when photos are uploaded directly to Drive folders rather than through Google Forms.
+One row per field photo in the reviewed archive. It links each image to a deterministic observation
+without exposing private Drive identifiers or links.
 
 Core fields:
 
@@ -54,6 +90,7 @@ Core fields:
 - `site_id`
 - `observation_date`
 - `photo_type`
-- `drive_file_url`
-- `local_filename`
+- `filename`
+- `relative_path`
+- `review_status`
 

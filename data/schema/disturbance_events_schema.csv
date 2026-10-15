@@ -9,5 +9,7 @@ detailed_event_type,string,no,,More specific disturbance type.,cut_stems
 evidence,string,yes,,Field evidence supporting the event.,Fresh cut stems and mower tracks visible along edge.
 herbicide_type,string,no,,Leave blank unless known.,
 herbicide_application_method,string,no,,Leave blank unless known or strongly inferred.,
+source_field_note_id,string,no,,Source field note supporting the event.,field_note_2026_06_13_01
+site_check_id,string,no,,Site-specific assessment normalized from the source note.,site_check_01_2026_06_13_mowing
 related_observation_id,string,no,,Observation where event was noticed.,OBS-2026-0002
 notes,string,no,,Free-text details.,Event timing inferred between visits.

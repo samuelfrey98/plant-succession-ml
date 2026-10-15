@@ -22,6 +22,16 @@ The review sequence is:
 6. Record what was inferred, what remains uncertain, and whether a disturbance event is actually visible.
 7. Copy the reviewed values into the matching public CSV rows and run validation.
 
+Field notes follow a separate normalization path:
+
+1. Preserve the original wording in `field_notes`.
+2. Create a `site_checks` row only for each site and disturbance type explicitly assessed.
+3. Create a `disturbance_events` row only from a positive `observed_event` check.
+4. Keep explicit negative checks as `none_seen`; do not create an event for them.
+5. Leave sites not named in the note unknown. A route note is never evidence about sites not visited.
+6. Keep phenology, taxon, and general notes out of `disturbance_events` unless they independently
+   document a disturbance.
+
 ## Status Meanings
 
 - `pending_visual_review`: the batch or photo has not been inspected.
@@ -32,8 +42,8 @@ The review sequence is:
 
 ## Synchronization Rule
 
-The Google Sheet is the convenient private editing surface; the committed CSVs are the reproducible
+The Google Sheets workbook is the convenient private editing surface; the committed CSVs are the reproducible
 public snapshot. A batch is complete only after both representations agree and
-`python scripts/validate_csvs.py` passes. Bulk raw photos remain in Drive and are never renamed or
+`python3 scripts/validate_csvs.py` passes. Bulk raw photos remain in Drive and are never renamed or
 overwritten by this workflow. Rebuilding the manifest preserves completed visual-review fields by
 stable `photo_id`.
