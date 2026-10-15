@@ -41,7 +41,7 @@ derived only from explicit field notes or separately documented photo evidence.
 
 ## Ingestion Service
 
-New monitoring rounds can be staged and reviewed through a local upload app instead of Google Forms or
+New monitoring rounds can be staged and reviewed through an upload app instead of Google Forms or
 manual CSV editing. Originals stay outside Git, while human-verified roles and deterministic identifiers
 flow into the same validated public tables used by the analysis pipeline.
 
@@ -53,7 +53,9 @@ flow into the same validated public tables used by the analysis pipeline.
 ```
 
 Open `http://127.0.0.1:8765`. See [docs/ingestion_service.md](docs/ingestion_service.md) for the storage
-contract, API, failure behavior, and model-labeling extension point.
+contract, API, Render deployment, failure behavior, and model-labeling extension point. The included
+`render.yaml` provisions a password-protected service and persistent storage for the mutable ingestion
+state; deploying the upload workflow safely therefore requires paid Render compute and disk resources.
 
 ## Longitudinal Results
 

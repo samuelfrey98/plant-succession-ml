@@ -1,6 +1,6 @@
-# Local Ingestion Service
+# Ingestion Service
 
-The ingestion service replaces the slow Google Forms photo-upload workflow with a local-first review
+The ingestion service replaces the slow Google Forms photo-upload workflow with a review
 queue. It handles new monitoring rounds without requiring manual file renaming or direct CSV editing.
 
 ## Run It
@@ -55,6 +55,37 @@ export PLANT_PHOTO_ARCHIVE="$HOME/PlantSuccession/photos"
 ```
 
 The service never exposes Drive IDs, private links, or exact coordinates in the public manifest.
+
+## Render Deployment
+
+The repository includes a `render.yaml` Blueprint for a single password-protected FastAPI web service.
+It attaches a 1 GB persistent disk at `/var/data`; the SQLite review queue, uploaded originals, private
+photo archive, and mutable public CSV snapshot all live below that mount point.
+
+1. Push the current branch to GitHub.
+2. In Render, choose **New > Blueprint** and connect this repository.
+3. Enter a strong value for `PLANT_INGESTION_PASSWORD` when Render prompts for it.
+4. Review the paid compute and disk charges, then apply the Blueprint.
+
+The username defaults to `admin` and can be changed through `PLANT_INGESTION_USERNAME`. The committed
+`data/public/*.csv` files seed an empty disk on first boot; subsequent deploys do not overwrite the
+hosted working copy. The unauthenticated `/api/health` endpoint contains only service status so Render
+can monitor the deployment.
+
+Persistent storage is required for real uploads. Deploying this service without the disk would lose
+review state, uploaded photos, and hosted CSV changes whenever Render replaces the instance. Because
+the disk is attached to one service instance, this deployment intentionally runs as a single instance.
+
+To reproduce the hosted storage layout locally:
+
+```bash
+export PLANT_PUBLIC_DATA="$HOME/PlantSuccession/public"
+export PLANT_INGESTION_STATE="$HOME/PlantSuccession/ingestion"
+export PLANT_PHOTO_ARCHIVE="$HOME/PlantSuccession/photos"
+export PLANT_INGESTION_USERNAME="admin"
+export PLANT_INGESTION_PASSWORD="choose-a-local-test-password"
+.venv/bin/uvicorn plant_succession.app:app --app-dir src --host 127.0.0.1 --port 8765
+```
 
 ## Candidate Labels
 

@@ -89,7 +89,10 @@ function renderBatches() {
   const target = document.querySelector("#batch-list");
   const batches = filteredBatches();
   if (!batches.length) {
-    target.innerHTML = '<div class="empty-state">No batches in this view.</div>';
+    const message = state.filter === "active"
+      ? "No open batches. Stage a photo batch to begin."
+      : "No batches in this view.";
+    target.innerHTML = `<div class="empty-state">${message}</div>`;
     return;
   }
   target.innerHTML = batches.map((batch) => {
