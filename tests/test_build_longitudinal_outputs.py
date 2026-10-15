@@ -83,6 +83,9 @@ class BuildLongitudinalOutputsTests(unittest.TestCase):
         self.assertEqual(result.iloc[0]["context_photo_count"], 1)
         self.assertEqual(result.iloc[1]["unclassified_photo_count"], 1)
         self.assertEqual(result.iloc[1]["days_since_previous_observation"], 7)
+        self.assertEqual(
+            str(result["estimated_total_vegetation_cover_pct"].dtype), "Float64"
+        )
 
 
 if __name__ == "__main__":
