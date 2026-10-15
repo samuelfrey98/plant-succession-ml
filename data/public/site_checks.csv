@@ -1,0 +1,17 @@
+site_check_id,field_note_id,site_id,check_date,visit_context,disturbance_assessment,disturbance_type_assessed,related_observation_id,notes
+site_check_05_2026_06_03_mowing,field_note_2026_06_03_01,5,2026-06-03,structured_observation,observed_event,mowing,site_05_2026_06_03,Site was explicitly compared with the prior day's condition.
+site_check_06_2026_06_03_mowing,field_note_2026_06_03_01,6,2026-06-03,structured_observation,observed_event,mowing,site_06_2026_06_03,Field note corroborates the photo-evidenced cutback.
+site_check_01_2026_06_13_mowing,field_note_2026_06_13_01,1,2026-06-13,structured_observation,observed_event,mowing,site_01_2026_06_13,Positive assessment applies only to Site 1.
+site_check_02_2026_06_13_mowing,field_note_2026_06_13_03,2,2026-06-13,structured_observation,observed_event,mowing,site_02_2026_06_13,Positive assessment applies to Site 2 and does not classify unnamed sites.
+site_check_03_2026_06_13_mowing,field_note_2026_06_13_04,3,2026-06-13,structured_observation,none_seen,mowing,site_03_2026_06_13,Explicit mowing check with none seen on this date only.
+site_check_08_2026_06_13_mowing,field_note_2026_06_13_05,8,2026-06-13,structured_observation,observed_event,mowing,site_08_2026_06_13,Positive assessment applies only to Site 8.
+site_check_01_2026_06_24_mowing,field_note_2026_06_24_01,1,2026-06-24,incidental_walk,observed_event,mowing,,No structured observation row exists for June 24.
+site_check_02_2026_06_24_mowing,field_note_2026_06_24_01,2,2026-06-24,incidental_walk,observed_event,mowing,,No structured observation row exists for June 24.
+site_check_10_2026_06_24_mowing,field_note_2026_06_24_01,10,2026-06-24,incidental_walk,observed_event,mowing,,No structured observation row exists for June 24.
+site_check_10_2026_08_05_tree_fall,field_note_2026_08_05_01,10,2026-08-05,incidental_walk,observed_event,tree_fall,,Tree fall was explicitly noted near Site 10.
+site_check_01_2026_08_12_mowing,field_note_2026_08_12_01,1,2026-08-12,incidental_walk,observed_event,mowing,,No structured observation row exists for August 12.
+site_check_02_2026_08_12_mowing,field_note_2026_08_12_01,2,2026-08-12,incidental_walk,observed_event,mowing,,No structured observation row exists for August 12.
+site_check_10_2026_08_12_mowing,field_note_2026_08_12_01,10,2026-08-12,incidental_walk,observed_event,mowing,,No structured observation row exists for August 12.
+site_check_01_2026_09_09_mowing,field_note_2026_09_09_01,1,2026-09-09,incidental_walk,observed_event,mowing,,No structured observation row exists for September 9.
+site_check_02_2026_09_09_mowing,field_note_2026_09_09_01,2,2026-09-09,incidental_walk,observed_event,mowing,,No structured observation row exists for September 9.
+site_check_10_2026_09_09_mowing,field_note_2026_09_09_01,10,2026-09-09,incidental_walk,observed_event,mowing,,No structured observation row exists for September 9.

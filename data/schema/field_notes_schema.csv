@@ -1,0 +1,10 @@
+field_name,data_type,required,allowed_values,description,example
+field_note_id,string,yes,,Stable identifier for the source note.,field_note_2026_06_13_01
+note_date,date,yes,,Date the note was recorded.,2026-06-13
+note_type,categorical,yes,disturbance;phenology;taxon;general,Broad subject of the note.,disturbance
+site_scope,categorical,yes,site_specific;multi_site;between_sites;route_general,Geographic scope explicitly supported by the note.,multi_site
+related_site_ids,string,no,,Semicolon-separated site IDs explicitly named or bounded by the note.,1;2
+raw_note,string,yes,,Original user-provided wording.,Mowed at site 2 also.
+source,categorical,yes,user_provided;field_notebook;google_form;photo_review,Origin of the note.,user_provided
+processing_status,categorical,yes,normalized;partially_normalized;unresolved,Whether structured records were derived without unresolved ambiguity.,normalized
+notes,string,no,,Normalization or scope notes.,No conclusion is drawn for unmentioned sites.

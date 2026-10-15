@@ -34,6 +34,8 @@ SCHEMA_FILES = {
     "site_registry": "site_registry_schema.csv",
     "observations": "observations_schema.csv",
     "disturbance_events": "disturbance_events_schema.csv",
+    "field_notes": "field_notes_schema.csv",
+    "site_checks": "site_checks_schema.csv",
     "photo_manifest": "photo_manifest_schema.csv",
 }
 
@@ -49,6 +51,8 @@ DATE_COLUMNS = {
     "site_registry": ["established_date"],
     "observations": ["observation_date"],
     "disturbance_events": ["disturbance_window_start", "disturbance_window_end"],
+    "field_notes": ["note_date"],
+    "site_checks": ["check_date"],
     "photo_manifest": ["observation_date"],
 }
 
@@ -208,7 +212,7 @@ def validate_site_references(
         return issues
 
     known_site_ids = {row.get("site_id", "") for row in tables["site_registry"]}
-    for table in ("observations", "disturbance_events", "photo_manifest"):
+    for table in ("observations", "disturbance_events", "site_checks", "photo_manifest"):
         for index, row in enumerate(tables.get(table, [])):
             site_id = row.get("site_id", "").strip()
             if site_id and site_id not in known_site_ids:
@@ -289,6 +293,256 @@ def validate_disturbance_observation_references(
     return issues
 
 
+def parse_related_site_ids(value: str) -> list[str]:
+    return [site_id.strip() for site_id in value.split(";") if site_id.strip()]
+
+
+def validate_field_note_site_references(
+    field_note_rows: list[dict[str, str]], site_rows: list[dict[str, str]]
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    known_site_ids = {row.get("site_id", "").strip() for row in site_rows}
+    for index, row in enumerate(field_note_rows):
+        site_ids = parse_related_site_ids(row.get("related_site_ids", ""))
+        if len(site_ids) != len(set(site_ids)):
+            issues.append(
+                ValidationIssue(
+                    "field_notes",
+                    row_number(index),
+                    "related_site_ids",
+                    "contains a duplicate site_id",
+                )
+            )
+        for site_id in site_ids:
+            if site_id not in known_site_ids:
+                issues.append(
+                    ValidationIssue(
+                        "field_notes",
+                        row_number(index),
+                        "related_site_ids",
+                        f"unknown site_id '{site_id}'",
+                    )
+                )
+
+        site_scope = row.get("site_scope", "").strip()
+        if site_scope == "site_specific" and len(site_ids) != 1:
+            issues.append(
+                ValidationIssue(
+                    "field_notes",
+                    row_number(index),
+                    "related_site_ids",
+                    "site_specific notes must reference exactly one site",
+                )
+            )
+        if site_scope in {"multi_site", "between_sites"} and len(site_ids) < 2:
+            issues.append(
+                ValidationIssue(
+                    "field_notes",
+                    row_number(index),
+                    "related_site_ids",
+                    f"{site_scope} notes must reference at least two sites",
+                )
+            )
+    return issues
+
+
+def validate_site_check_references(
+    site_check_rows: list[dict[str, str]],
+    field_note_rows: list[dict[str, str]],
+    observation_rows: list[dict[str, str]],
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    field_notes = {
+        row.get("field_note_id", "").strip(): row for row in field_note_rows
+    }
+    observations = {
+        row.get("observation_id", "").strip(): row for row in observation_rows
+    }
+    for index, row in enumerate(site_check_rows):
+        field_note_id = row.get("field_note_id", "").strip()
+        note = field_notes.get(field_note_id)
+        if note is None:
+            issues.append(
+                ValidationIssue(
+                    "site_checks",
+                    row_number(index),
+                    "field_note_id",
+                    f"unknown field_note_id '{field_note_id}'",
+                )
+            )
+        elif row.get("check_date", "").strip() != note.get("note_date", "").strip():
+            issues.append(
+                ValidationIssue(
+                    "site_checks",
+                    row_number(index),
+                    "check_date",
+                    "must match the source field note date",
+                )
+            )
+        elif row.get("site_id", "").strip() not in parse_related_site_ids(
+            note.get("related_site_ids", "")
+        ):
+            issues.append(
+                ValidationIssue(
+                    "site_checks",
+                    row_number(index),
+                    "site_id",
+                    "must be explicitly named in the source field note",
+                )
+            )
+        elif note.get("note_type", "").strip() != "disturbance":
+            issues.append(
+                ValidationIssue(
+                    "site_checks",
+                    row_number(index),
+                    "field_note_id",
+                    "source field note must have note_type 'disturbance'",
+                )
+            )
+
+        observation_id = row.get("related_observation_id", "").strip()
+        observation = observations.get(observation_id)
+        if observation_id and observation is None:
+            issues.append(
+                ValidationIssue(
+                    "site_checks",
+                    row_number(index),
+                    "related_observation_id",
+                    f"unknown observation_id '{observation_id}'",
+                )
+            )
+        elif observation is not None:
+            if row.get("site_id", "").strip() != observation.get("site_id", "").strip():
+                issues.append(
+                    ValidationIssue(
+                        "site_checks",
+                        row_number(index),
+                        "related_observation_id",
+                        "linked observation must have the same site_id",
+                    )
+                )
+            if row.get("check_date", "").strip() != observation.get(
+                "observation_date", ""
+            ).strip():
+                issues.append(
+                    ValidationIssue(
+                        "site_checks",
+                        row_number(index),
+                        "related_observation_id",
+                        "linked observation must have the same date",
+                    )
+                )
+    return issues
+
+
+def validate_disturbance_lineage(
+    disturbance_rows: list[dict[str, str]],
+    site_check_rows: list[dict[str, str]],
+    field_note_rows: list[dict[str, str]],
+    *,
+    require_lineage: bool = False,
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    checks = {row.get("site_check_id", "").strip(): row for row in site_check_rows}
+    note_ids = {row.get("field_note_id", "").strip() for row in field_note_rows}
+    events_by_check: Counter[str] = Counter()
+
+    for index, row in enumerate(disturbance_rows):
+        note_id = row.get("source_field_note_id", "").strip()
+        check_id = row.get("site_check_id", "").strip()
+        if require_lineage and not note_id:
+            issues.append(
+                ValidationIssue(
+                    "disturbance_events",
+                    row_number(index),
+                    "source_field_note_id",
+                    "public events must identify a source field note",
+                )
+            )
+        if require_lineage and not check_id:
+            issues.append(
+                ValidationIssue(
+                    "disturbance_events",
+                    row_number(index),
+                    "site_check_id",
+                    "public events must identify a site check",
+                )
+            )
+        if note_id and note_id not in note_ids:
+            issues.append(
+                ValidationIssue(
+                    "disturbance_events",
+                    row_number(index),
+                    "source_field_note_id",
+                    f"unknown field_note_id '{note_id}'",
+                )
+            )
+
+        if not check_id:
+            continue
+        events_by_check[check_id] += 1
+        check = checks.get(check_id)
+        if check is None:
+            issues.append(
+                ValidationIssue(
+                    "disturbance_events",
+                    row_number(index),
+                    "site_check_id",
+                    f"unknown site_check_id '{check_id}'",
+                )
+            )
+            continue
+        comparisons = {
+            "site_id": "site_id",
+            "disturbance_event_type": "disturbance_type_assessed",
+            "source_field_note_id": "field_note_id",
+            "disturbance_window_end": "check_date",
+        }
+        for event_column, check_column in comparisons.items():
+            if row.get(event_column, "").strip() != check.get(check_column, "").strip():
+                issues.append(
+                    ValidationIssue(
+                        "disturbance_events",
+                        row_number(index),
+                        event_column,
+                        f"must match linked site check {check_column}",
+                    )
+                )
+        if check.get("disturbance_assessment", "").strip() != "observed_event":
+            issues.append(
+                ValidationIssue(
+                    "disturbance_events",
+                    row_number(index),
+                    "site_check_id",
+                    "linked site check must have assessment 'observed_event'",
+                )
+            )
+
+    for index, check in enumerate(site_check_rows):
+        check_id = check.get("site_check_id", "").strip()
+        event_count = events_by_check[check_id]
+        assessment = check.get("disturbance_assessment", "").strip()
+        if assessment == "observed_event" and event_count != 1:
+            issues.append(
+                ValidationIssue(
+                    "site_checks",
+                    row_number(index),
+                    "disturbance_assessment",
+                    f"observed_event must link to exactly one event; found {event_count}",
+                )
+            )
+        if assessment != "observed_event" and event_count:
+            issues.append(
+                ValidationIssue(
+                    "site_checks",
+                    row_number(index),
+                    "disturbance_assessment",
+                    "non-event assessments must not link to a disturbance event",
+                )
+            )
+    return issues
+
+
 def validate_table(
     table: str,
     rows: list[dict[str, str]],
@@ -326,6 +580,26 @@ def validate_dataset(data_dir: Path, schema_dir: Path) -> list[ValidationIssue]:
         issues.extend(validate_observation_content(tables["observations"]))
     if "disturbance_events" in tables:
         issues.extend(validate_disturbance_windows(tables["disturbance_events"]))
+    if {"field_notes", "site_registry"}.issubset(tables):
+        issues.extend(
+            validate_field_note_site_references(
+                tables["field_notes"], tables["site_registry"]
+            )
+        )
+    if {"site_checks", "field_notes", "observations"}.issubset(tables):
+        issues.extend(
+            validate_site_check_references(
+                tables["site_checks"], tables["field_notes"], tables["observations"]
+            )
+        )
+    if {"disturbance_events", "site_checks", "field_notes"}.issubset(tables):
+        issues.extend(
+            validate_disturbance_lineage(
+                tables["disturbance_events"],
+                tables["site_checks"],
+                tables["field_notes"],
+            )
+        )
 
     return issues
 
@@ -337,6 +611,8 @@ def validate_public_photo_data(public_dir: Path, schema_dir: Path) -> list[Valid
     required_files = {
         "site_registry": public_dir / "site_registry.csv",
         "observations": public_dir / "observations.csv",
+        "field_notes": public_dir / "field_notes.csv",
+        "site_checks": public_dir / "site_checks.csv",
         "photo_manifest": public_dir / "photo_manifest.csv",
         "photo_batch_summary": public_dir / "photo_batch_summary.csv",
     }
@@ -351,16 +627,27 @@ def validate_public_photo_data(public_dir: Path, schema_dir: Path) -> list[Valid
     observation_rows = read_csv(required_files["observations"])
     photo_rows = read_csv(required_files["photo_manifest"])
     summary_rows = read_csv(required_files["photo_batch_summary"])
+    field_note_rows = read_csv(required_files["field_notes"])
+    site_check_rows = read_csv(required_files["site_checks"])
     tables = {
         "site_registry": site_rows,
         "observations": observation_rows,
+        "field_notes": field_note_rows,
+        "site_checks": site_check_rows,
         "photo_manifest": photo_rows,
     }
 
     if disturbance_path.exists():
         tables["disturbance_events"] = read_csv(disturbance_path)
 
-    for table in ("site_registry", "observations", "disturbance_events", "photo_manifest"):
+    for table in (
+        "site_registry",
+        "observations",
+        "disturbance_events",
+        "field_notes",
+        "site_checks",
+        "photo_manifest",
+    ):
         if table not in tables:
             continue
         path = disturbance_path if table == "disturbance_events" else required_files[table]
@@ -371,6 +658,8 @@ def validate_public_photo_data(public_dir: Path, schema_dir: Path) -> list[Valid
     issues.extend(validate_observation_content(observation_rows))
     issues.extend(validate_unique_values("site_registry", site_rows, "site_id"))
     issues.extend(validate_unique_values("observations", observation_rows, "observation_id"))
+    issues.extend(validate_unique_values("field_notes", field_note_rows, "field_note_id"))
+    issues.extend(validate_unique_values("site_checks", site_check_rows, "site_check_id"))
     issues.extend(validate_unique_values("photo_manifest", photo_rows, "photo_id"))
     issues.extend(validate_unique_values("photo_manifest", photo_rows, "relative_path"))
     if "disturbance_events" in tables:
@@ -386,6 +675,20 @@ def validate_public_photo_data(public_dir: Path, schema_dir: Path) -> list[Valid
                 disturbance_rows, observation_rows
             )
         )
+        issues.extend(
+            validate_disturbance_lineage(
+                disturbance_rows,
+                site_check_rows,
+                field_note_rows,
+                require_lineage=True,
+            )
+        )
+    issues.extend(validate_field_note_site_references(field_note_rows, site_rows))
+    issues.extend(
+        validate_site_check_references(
+            site_check_rows, field_note_rows, observation_rows
+        )
+    )
 
     private_columns = {"drive_file_id", "drive_file_url", "drive_folder_url"}
     leaked_columns = private_columns.intersection(read_headers(required_files["photo_manifest"]))

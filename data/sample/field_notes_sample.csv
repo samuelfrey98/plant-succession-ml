@@ -1,0 +1,4 @@
+field_note_id,note_date,note_type,site_scope,related_site_ids,raw_note,source,processing_status,notes
+field_note_2026_06_14_01,2026-06-14,disturbance,site_specific,2,Freshly cut vegetation observed at Site 2.,field_notebook,normalized,Sample note.
+field_note_2026_06_14_02,2026-06-14,phenology,between_sites,1;2,Flowering plant observed between Sites 1 and 2.,field_notebook,normalized,Not assigned to either site.
+field_note_2026_06_14_03,2026-06-14,disturbance,site_specific,3,No mowing evidence seen at Site 3.,field_notebook,normalized,Sample explicit negative note.

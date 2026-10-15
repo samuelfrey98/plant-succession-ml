@@ -19,7 +19,7 @@ Current implemented assets:
 
 - 11 monitoring sites, including one later-established sensitive-fern disturbance site
 - A structured Google Form for site observations
-- A Google Sheets workbook with site, observation, and disturbance-event tables
+- A Google Sheets workbook with review, source-note, site-check, and disturbance-event tables
 - Repeatable photo protocols for wide, quadrat, close-up, and context photos
 - Initial schema design for ecological observations and disturbance history
 - A sanitized 505-row photo manifest with deterministic IDs and logical archive paths
@@ -28,22 +28,23 @@ Current implemented assets:
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
 - A private Google Sheets review workbook synchronized with the public CSV structure
 - Completed visual reviews for Sites 1-11, with 505 verified photo roles and uncertainty-aware cover estimates
-- One photo-evidenced disturbance record with explicit date-window and confidence metadata
+- 11 preserved field notes normalized into 16 explicit site checks and 15 disturbance events
+- Source-note lineage that keeps unmentioned sites unknown and separates phenology from disturbance
 - A reproducible analysis-ready join with explicit completeness and longitudinal fields
 - Generated cover-change figures for the completed Site 1-11 sequences
 
 The project does not yet include a trained machine-learning model. Camera order is not treated as a
-reliable photo label; all published roles were assigned through visual review.
+reliable photo label; all published roles were assigned through visual review. Disturbance records are
+derived only from explicit field notes or separately documented photo evidence.
 
 ## Longitudinal Results
 
 ![Site 1 cover estimates across six monitoring rounds](outputs/figures/site_01_cover_over_time.png)
 
 Site 1 now has six reviewed observations spanning May 25 through July 20. The photo-backed estimates
-show two substantial decreases in live vegetation cover followed by recovery. The images are consistent
-with mowing or clearing, but the repository does not promote those visual clues to confirmed disturbance
-events without independent evidence. Unreviewed observation shells preserve missing values until their
-photos support a defensible estimate.
+show two substantial decreases in live vegetation cover followed by recovery. Separate field notes record
+mowing during the monitored period, with bounded event windows retained in the disturbance table. Missing
+observation values remain explicit when the photos do not support a defensible estimate.
 
 ![Site 2 cover estimates across six monitoring rounds](outputs/figures/site_02_cover_over_time.png)
 
@@ -68,16 +69,15 @@ confident species-level identification; no discrete disturbance is visible.
 ![Site 5 cover estimates across seven monitoring rounds](outputs/figures/site_05_cover_over_time.png)
 
 Site 5 contains seven photo-backed visits, including an additional June 3 round. The monitored woodland-edge
-opening remains dominated by a short grass layer, with a July decline followed by partial recovery. Fresh cut
-foliage on June 3 is recorded as evidence consistent with recent mowing, but it is not promoted to a confirmed
-disturbance event without independent support. Uncertain edge plants are retained as stable morphotypes.
+opening remains dominated by a short grass layer, with a July decline followed by partial recovery. A June 3
+field note records likely same-day mowing, while uncertain edge plants are retained as stable morphotypes.
 
 ![Site 6 cover estimates across seven monitoring rounds](outputs/figures/site_06_cover_over_time.png)
 
 Site 6 follows a dense woodland-edge herb layer across seven photo-backed visits. Archived June 3 images show
-freshly cut stems and leaves plus a 25 percentage-point decline in estimated live cover relative to June 1;
-this is stored as a `likely` mowing event within a bounded date window, not as independently confirmed field
-activity. Cover then recovers steadily to an estimated 95% by July 20. The dominant dissected-leaf plant remains
+freshly cut stems and leaves plus a 25 percentage-point decline in estimated live cover relative to June 1.
+The matching field note and photo evidence support a `likely` mowing event within a bounded date window.
+Cover then recovers steadily to an estimated 95% by July 20. The dominant dissected-leaf plant remains
 a stable morphotype because the photographs do not support a defensible species-level identification.
 
 ![Site 7 cover estimates across five monitoring rounds](outputs/figures/site_07_cover_over_time.png)
@@ -145,7 +145,7 @@ The project currently uses:
 - Google My Maps / Google Earth site pins
 - Google Drive folders containing the original field-photo archive
 - A private Google Sheets workbook used for visual review and correction
-- Sanitized CSV snapshots for sites, observations, disturbance events, and photo metadata
+- Sanitized CSV snapshots for sites, observations, source notes, site checks, disturbance events, and photos
 - Post-hoc visual percent-cover estimates where the archived photos support them
 
 Google Forms was the original collection design, but bulk photo uploads proved too slow in practice. The
@@ -203,16 +203,21 @@ plant-succession-ml/
 
 ## Schema Overview
 
-The project is organized around five core tables:
+The project is organized around seven core tables:
 
 - `site_registry`: one row per monitoring site
 - `observations`: one row per site visit
+- `field_notes`: one row per preserved source note, including non-disturbance notes
+- `site_checks`: one row per explicitly assessed site and disturbance type
 - `disturbance_events`: one row per observed or inferred disturbance event
 - `photo_manifest`: one row per uploaded field photo
 - `photo_batch_summary`: one row per site/date upload folder
 
 The public photo manifest links each photo to a deterministic site/date observation ID without exposing
 private Drive file IDs, links, or exact coordinates.
+
+The disturbance lineage is deliberately conservative: only positive site checks create event rows,
+explicit negative checks remain queryable, and sites omitted from a route note remain unknown.
 
 Each schema file in `data/schema/` uses:
 
