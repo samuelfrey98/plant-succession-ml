@@ -7,7 +7,7 @@ The pipeline converts a real archive of repeatable field photography into saniti
 photo-backed observation records, validation results, and reproducible longitudinal outputs. The image
 archive can support later computer-vision experiments, but the current portfolio focus is data engineering.
 
-**11 sites | 63 visit folders | 63 photo-backed observations (43 visually reviewed) | 505 field photos | May 25-July 20, 2026**
+**11 sites | 63 visit folders | 63 photo-backed observations (49 visually reviewed) | 505 field photos | May 25-July 20, 2026**
 
 ## Project Status
 
@@ -27,10 +27,10 @@ Current implemented assets:
 - A 63-row upload-batch summary used to audit completeness independently of observation content
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
 - A private Google Sheets review workbook synchronized with the public CSV structure
-- Completed visual reviews for Sites 1-7, with 331 verified photo roles and uncertainty-aware cover estimates
+- Completed visual reviews for Sites 1-8, with 380 verified photo roles and uncertainty-aware cover estimates
 - One photo-evidenced disturbance record with explicit date-window and confidence metadata
 - A reproducible analysis-ready join with explicit completeness and longitudinal fields
-- Generated cover-change figures for the completed Site 1-7 sequences
+- Generated cover-change figures for the completed Site 1-8 sequences
 
 The project does not yet include a trained machine-learning model. Photo roles are deliberately marked
 `unclassified` until visual review; camera order is not treated as a reliable label.
@@ -86,6 +86,13 @@ Site 7 follows a mowed field edge across five photo-backed visits. Estimated liv
 June 3 to 35% on July 3, then rebounds to 70% by July 20 as grasses expand. Common mullein is retained at
 `likely` confidence, while less certain recurring plants use stable morphotype labels. The photos do not show
 enough evidence to infer a new mowing event during the monitored sequence.
+
+![Site 8 cover estimates across six monitoring rounds](outputs/figures/site_08_cover_over_time.png)
+
+Site 8 follows a mostly exposed roadside patch across six photo-backed visits. The sequence shows substantial
+grass-led infill by July 20 while retaining a bare center. June 21 includes more vegetated margin than adjacent
+overhead frames, so the mid-sequence variation remains descriptive rather than evidence of disturbance. The
+site name is historical context; the photos do not support a confident mugwort identification.
 
 ## Review Workflow
 
@@ -195,7 +202,7 @@ field_name,data_type,required,allowed_values,description,example
 ## Current Limitations
 
 - Species identifications are field estimates and are not expert-verified unless stated.
-- Twenty-five photo-backed observation shells still await visual review.
+- Fourteen photo-backed observation shells still await visual review.
 - Photo workflows are being revised because Google Forms file uploads can be awkward for large iPhone images.
 - Successional-stage labels are interpretive and should not replace raw cover and taxon fields.
 - No trained ML model is included yet.
