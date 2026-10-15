@@ -1,3 +1,4 @@
+import base64
 import csv
 import io
 import shutil
@@ -20,6 +21,7 @@ from plant_succession.ingestion import (  # noqa: E402
     IngestionService,
     infer_photo_type,
 )
+from plant_succession.app import initialize_public_data, valid_basic_auth  # noqa: E402
 from plant_succession.validate import validate_public_photo_data  # noqa: E402
 
 
@@ -124,6 +126,34 @@ class IngestionServiceTests(unittest.TestCase):
         )
         self.assertEqual(batch["photo_count"], 1)
         self.assertEqual(batch["duplicate_count"], 1)
+
+    def test_persistent_public_data_is_seeded_without_overwriting_changes(self):
+        source = self.root / "seed"
+        target = self.root / "durable"
+        source.mkdir()
+        (source / "observations.csv").write_text("version\nrepo\n", encoding="utf-8")
+        (source / "sites.csv").write_text("version\nrepo\n", encoding="utf-8")
+        target.mkdir()
+        (target / "observations.csv").write_text("version\nhosted\n", encoding="utf-8")
+
+        initialize_public_data(source, target)
+
+        self.assertEqual(
+            (target / "observations.csv").read_text(encoding="utf-8"),
+            "version\nhosted\n",
+        )
+        self.assertEqual(
+            (target / "sites.csv").read_text(encoding="utf-8"),
+            "version\nrepo\n",
+        )
+
+    def test_basic_auth_validation(self):
+        valid = "Basic " + base64.b64encode(b"samuel:correct horse").decode("ascii")
+        invalid = "Basic " + base64.b64encode(b"samuel:wrong").decode("ascii")
+        self.assertTrue(valid_basic_auth(valid, "samuel", "correct horse"))
+        self.assertFalse(valid_basic_auth(invalid, "samuel", "correct horse"))
+        self.assertFalse(valid_basic_auth("Basic not-base64", "samuel", "correct horse"))
+        self.assertFalse(valid_basic_auth(None, "samuel", "correct horse"))
 
 
 if __name__ == "__main__":

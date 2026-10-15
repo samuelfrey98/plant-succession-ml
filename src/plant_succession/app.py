@@ -1,12 +1,16 @@
-"""FastAPI entrypoint for the local photo-ingestion review service."""
+"""FastAPI entrypoint for the photo-ingestion review service."""
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
+import secrets
+import shutil
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -15,18 +19,50 @@ from plant_succession.ingestion import IngestionError, IngestionPaths, Ingestion
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = Path(__file__).resolve().parent / "web"
+DEFAULT_PUBLIC_DIR = ROOT / "data" / "public"
+
+
+def initialize_public_data(source_dir: Path, public_dir: Path) -> None:
+    """Seed missing public CSVs without overwriting a durable dataset."""
+
+    public_dir.mkdir(parents=True, exist_ok=True)
+    if source_dir.resolve() == public_dir.resolve():
+        return
+    for source in source_dir.glob("*.csv"):
+        destination = public_dir / source.name
+        if not destination.exists():
+            shutil.copy2(source, destination)
+
+
+def valid_basic_auth(header: str | None, username: str, password: str) -> bool:
+    """Validate one HTTP Basic authorization header using constant-time comparison."""
+
+    if not header or not header.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(header[6:], validate=True).decode("utf-8")
+        supplied_username, supplied_password = decoded.split(":", 1)
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return False
+    return secrets.compare_digest(supplied_username, username) and secrets.compare_digest(
+        supplied_password, password
+    )
 
 
 def build_service() -> IngestionService:
+    public_dir = Path(
+        os.environ.get("PLANT_PUBLIC_DATA", DEFAULT_PUBLIC_DIR)
+    ).expanduser()
     state_dir = Path(
         os.environ.get("PLANT_INGESTION_STATE", ROOT / "data" / "raw" / "ingestion")
     ).expanduser()
     archive_dir = Path(
         os.environ.get("PLANT_PHOTO_ARCHIVE", ROOT / "photos")
     ).expanduser()
+    initialize_public_data(DEFAULT_PUBLIC_DIR, public_dir)
     return IngestionService(
         IngestionPaths(
-            public_dir=ROOT / "data" / "public",
+            public_dir=public_dir,
             schema_dir=ROOT / "data" / "schema",
             state_dir=state_dir,
             archive_dir=archive_dir,
@@ -41,6 +77,23 @@ app = FastAPI(
     description="Local-first staging and review for longitudinal field photos.",
 )
 app.mount("/assets", StaticFiles(directory=WEB_DIR), name="assets")
+
+
+@app.middleware("http")
+async def require_authentication(request: Request, call_next) -> Response:
+    """Protect hosted data while leaving local development and health checks simple."""
+
+    password = os.environ.get("PLANT_INGESTION_PASSWORD", "")
+    if not password or request.url.path == "/api/health":
+        return await call_next(request)
+    username = os.environ.get("PLANT_INGESTION_USERNAME", "admin")
+    if valid_basic_auth(request.headers.get("Authorization"), username, password):
+        return await call_next(request)
+    return JSONResponse(
+        status_code=401,
+        content={"detail": "Authentication required."},
+        headers={"WWW-Authenticate": 'Basic realm="Plant Succession Ingest"'},
+    )
 
 
 class ReviewUpdate(BaseModel):

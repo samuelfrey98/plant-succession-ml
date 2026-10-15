@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Local review queue for Plant Succession field-photo ingestion.">
+    <meta name="description" content="Review queue for Plant Succession field-photo ingestion.">
     <title>Plant Succession Ingest</title>
     <link rel="stylesheet" href="/assets/styles.css">
     <script defer src="/assets/lucide.min.js"></script>
@@ -18,7 +18,7 @@
       </div>
       <div class="service-state" id="service-state">
         <span class="status-dot"></span>
-        Local service
+        Service online
       </div>
     </header>
 
@@ -59,7 +59,7 @@
 
         <div class="privacy-note">
           <i data-lucide="shield-check" aria-hidden="true"></i>
-          <p>Originals stay on this Mac. Git receives only validated metadata.</p>
+          <p>Originals stay in private storage. Only validated metadata reaches the public dataset.</p>
         </div>
       </aside>
 
@@ -89,7 +89,7 @@
             <h2>Upload batches</h2>
           </div>
           <div class="segmented-control" role="group" aria-label="Filter batches">
-            <button class="segment active" data-filter="active" type="button">Active</button>
+            <button class="segment active" data-filter="active" type="button" title="Batches not yet published">Open</button>
             <button class="segment" data-filter="published" type="button">Published</button>
             <button class="segment" data-filter="all" type="button">All</button>
           </div>
