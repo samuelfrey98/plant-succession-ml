@@ -7,7 +7,7 @@ The pipeline converts a real archive of repeatable field photography into saniti
 photo-backed observation records, validation results, and reproducible longitudinal outputs. The image
 archive can support later computer-vision experiments, but the current portfolio focus is data engineering.
 
-**11 sites | 63 visit folders | 63 photo-backed observations (55 visually reviewed) | 505 field photos | May 25-July 20, 2026**
+**11 sites | 63 visit folders | 63 photo-backed observations (61 visually reviewed) | 505 field photos | May 25-July 20, 2026**
 
 ## Project Status
 
@@ -27,10 +27,10 @@ Current implemented assets:
 - A 63-row upload-batch summary used to audit completeness independently of observation content
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
 - A private Google Sheets review workbook synchronized with the public CSV structure
-- Completed visual reviews for Sites 1-9, with 435 verified photo roles and uncertainty-aware cover estimates
+- Completed visual reviews for Sites 1-10, with 489 verified photo roles and uncertainty-aware cover estimates
 - One photo-evidenced disturbance record with explicit date-window and confidence metadata
 - A reproducible analysis-ready join with explicit completeness and longitudinal fields
-- Generated cover-change figures for the completed Site 1-9 sequences
+- Generated cover-change figures for the completed Site 1-10 sequences
 
 The project does not yet include a trained machine-learning model. Photo roles are deliberately marked
 `unclassified` until visual review; camera order is not treated as a reliable label.
@@ -100,6 +100,13 @@ Site 9 follows recolonization of a wood-chip-covered woodland edge across six ph
 live cover rises from 25% to 70% while visible wood-chip cover falls from 65% to 20%. Recurring plants are
 retained as stable morphotypes because the photographs do not support species-level identification, and no
 discrete disturbance event is inferred from the sequence.
+
+![Site 10 cover estimates across six monitoring rounds](outputs/figures/site_10_cover_over_time.png)
+
+Site 10 follows colonization around a persistently exposed subsoil patch across six photo-backed visits.
+Estimated live cover rises from 20% to 40%, primarily along the road and woodland margins, while roughly half
+of the monitored surface remains bare by July 20. Recurring plants are retained as stable morphotypes, and the
+sequence does not provide enough evidence to infer a new disturbance event.
 
 ## Review Workflow
 
@@ -209,7 +216,7 @@ field_name,data_type,required,allowed_values,description,example
 ## Current Limitations
 
 - Species identifications are field estimates and are not expert-verified unless stated.
-- Eight photo-backed observation shells still await visual review.
+- Two photo-backed observation shells still await visual review.
 - Photo workflows are being revised because Google Forms file uploads can be awkward for large iPhone images.
 - Successional-stage labels are interpretive and should not replace raw cover and taxon fields.
 - No trained ML model is included yet.
