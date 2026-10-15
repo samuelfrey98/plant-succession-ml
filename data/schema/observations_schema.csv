@@ -4,7 +4,7 @@ site_id,int,yes,,Foreign key to site_registry.site_id.,1
 observation_date,date,yes,,Date of field observation.,2026-06-07
 observation_datetime,datetime,no,,Optional precise observation timestamp.,2026-06-07T09:30:00
 observer_id,string,no,,Observer identifier.,observer_01
-record_origin,categorical,no,field_form;photo_archive_backfill;manual_backfill,How the observation row was created.,photo_archive_backfill
+record_origin,categorical,no,field_form;ingestion_app;photo_archive_backfill;manual_backfill,How the observation row was created.,photo_archive_backfill
 review_status,categorical,no,pending_visual_review;partially_reviewed;reviewed,Backfill review state for the observation.,pending_visual_review
 source_photo_count,int,no,,Number of manifest photos linked to the observation.,8
 dominant_species,string,no,,Best defensible dominant taxon label.,Artemisia vulgaris

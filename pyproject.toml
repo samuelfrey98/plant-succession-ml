@@ -4,9 +4,20 @@ version = "0.1.0"
 description = "Field-data infrastructure for plant succession and disturbance-response monitoring."
 requires-python = ">=3.10"
 dependencies = [
+  "fastapi>=0.115",
   "pandas>=2.2",
   "matplotlib>=3.8",
+  "pillow>=11.1",
+  "pillow-heif>=0.20",
+  "python-multipart>=0.0.18",
+  "uvicorn[standard]>=0.32",
 ]
+
+[project.scripts]
+plant-succession-ingest = "plant_succession.app:run"
+
+[tool.setuptools.package-data]
+plant_succession = ["web/*"]
 
 [tool.ruff]
 line-length = 100
