@@ -1,3 +1,8 @@
 pandas>=2.2
 matplotlib>=3.8
+fastapi>=0.115
+pillow>=11.1
+pillow-heif>=0.20
+python-multipart>=0.0.18
+uvicorn[standard]>=0.32
 

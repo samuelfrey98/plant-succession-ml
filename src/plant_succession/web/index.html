@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Local review queue for Plant Succession field-photo ingestion.">
+    <title>Plant Succession Ingest</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script defer src="/assets/lucide.min.js"></script>
+    <script defer src="/assets/app.js"></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand-mark" aria-hidden="true">PS</div>
+      <div>
+        <h1>Plant Succession Ingest</h1>
+        <p>Stage, review, and publish field-photo batches</p>
+      </div>
+      <div class="service-state" id="service-state">
+        <span class="status-dot"></span>
+        Local service
+      </div>
+    </header>
+
+    <main class="shell">
+      <aside class="upload-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">New batch</p>
+            <h2>Register field photos</h2>
+          </div>
+        </div>
+
+        <form id="upload-form">
+          <label for="site-id">Monitoring site</label>
+          <select id="site-id" name="site_id" required>
+            <option value="">Loading sites...</option>
+          </select>
+
+          <label for="observation-date">Observation date</label>
+          <input id="observation-date" name="observation_date" type="date" required>
+
+          <label for="observation-notes">Field note <span>optional</span></label>
+          <textarea id="observation-notes" name="observation_notes" rows="3" placeholder="A short note about this visit"></textarea>
+
+          <label class="drop-zone" id="drop-zone" for="files">
+            <i data-lucide="image-plus" aria-hidden="true"></i>
+            <strong>Choose photos</strong>
+            <span>JPEG, PNG, WebP, HEIC, or HEIF</span>
+            <input id="files" name="files" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" multiple required>
+          </label>
+          <div class="file-summary" id="file-summary">No files selected</div>
+
+          <button class="primary-button" id="upload-button" type="submit">
+            <i data-lucide="upload" aria-hidden="true"></i>
+            Stage batch
+          </button>
+        </form>
+
+        <div class="privacy-note">
+          <i data-lucide="shield-check" aria-hidden="true"></i>
+          <p>Originals stay on this Mac. Git receives only validated metadata.</p>
+        </div>
+      </aside>
+
+      <section class="workspace">
+        <div class="metrics" aria-label="Ingestion queue summary">
+          <div class="metric">
+            <span>Needs review</span>
+            <strong id="metric-review">0</strong>
+          </div>
+          <div class="metric">
+            <span>Unresolved photos</span>
+            <strong id="metric-photos">0</strong>
+          </div>
+          <div class="metric">
+            <span>Ready</span>
+            <strong id="metric-ready">0</strong>
+          </div>
+          <div class="metric">
+            <span>Published</span>
+            <strong id="metric-published">0</strong>
+          </div>
+        </div>
+
+        <div class="queue-header">
+          <div>
+            <p class="eyebrow">Pipeline</p>
+            <h2>Upload batches</h2>
+          </div>
+          <div class="segmented-control" role="group" aria-label="Filter batches">
+            <button class="segment active" data-filter="active" type="button">Active</button>
+            <button class="segment" data-filter="published" type="button">Published</button>
+            <button class="segment" data-filter="all" type="button">All</button>
+          </div>
+        </div>
+
+        <div class="batch-list" id="batch-list">
+          <div class="empty-state">Loading ingestion queue...</div>
+        </div>
+
+        <section class="review-workspace hidden" id="review-workspace" aria-live="polite">
+          <div class="review-header">
+            <div>
+              <p class="eyebrow" id="review-kicker">Batch review</p>
+              <h2 id="review-title">Select a batch</h2>
+              <p id="review-subtitle"></p>
+            </div>
+            <div class="review-actions">
+              <button class="secondary-button" id="accept-button" type="button" title="Accept suggestions based on explicit filenames">
+                <i data-lucide="wand-sparkles" aria-hidden="true"></i>
+                Accept explicit suggestions
+              </button>
+              <button class="primary-button" id="publish-button" type="button" disabled>
+                <i data-lucide="database" aria-hidden="true"></i>
+                Publish metadata
+              </button>
+            </div>
+          </div>
+          <div class="review-progress">
+            <div class="progress-track"><span id="progress-bar"></span></div>
+            <span id="progress-label">0 of 0 reviewed</span>
+          </div>
+          <div class="photo-grid" id="photo-grid"></div>
+        </section>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status"></div>
+  </body>
+</html>

@@ -18,6 +18,8 @@ images before ecological fields and photo roles are published.
 Current implemented assets:
 
 - 11 monitoring sites, including one later-established sensitive-fern disturbance site
+- A local FastAPI ingestion service with private staging, review queues, and validated publication
+- Content-hash duplicate detection, HEIC previews, EXIF date checks, and versioned candidate labels
 - A structured Google Form for site observations
 - A Google Sheets workbook with review, source-note, site-check, and disturbance-event tables
 - Repeatable photo protocols for wide, quadrat, close-up, and context photos
@@ -36,6 +38,22 @@ Current implemented assets:
 The project does not yet include a trained machine-learning model. Camera order is not treated as a
 reliable photo label; all published roles were assigned through visual review. Disturbance records are
 derived only from explicit field notes or separately documented photo evidence.
+
+## Ingestion Service
+
+New monitoring rounds can be staged and reviewed through a local upload app instead of Google Forms or
+manual CSV editing. Originals stay outside Git, while human-verified roles and deterministic identifiers
+flow into the same validated public tables used by the analysis pipeline.
+
+![Plant Succession local ingestion queue](docs/screenshots/ingestion_app.png)
+
+```bash
+.venv/bin/pip install -e .
+.venv/bin/python scripts/run_ingestion_app.py
+```
+
+Open `http://127.0.0.1:8765`. See [docs/ingestion_service.md](docs/ingestion_service.md) for the storage
+contract, API, failure behavior, and model-labeling extension point.
 
 ## Longitudinal Results
 
