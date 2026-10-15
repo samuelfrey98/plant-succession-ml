@@ -20,6 +20,12 @@ COVER_COLUMNS = [
     "gravel_rock_pct",
 ]
 
+SURFACE_COVER_COLUMNS = [
+    *COVER_COLUMNS,
+    "litter_mulch_woodchip_pct",
+    "standing_dead_pct",
+]
+
 
 def build_analysis_table(
     observations: pd.DataFrame,
@@ -36,7 +42,9 @@ def build_analysis_table(
     photos["site_id"] = photos["site_id"].astype("string")
     observations["observation_date"] = pd.to_datetime(observations["observation_date"])
 
-    for column in COVER_COLUMNS:
+    for column in SURFACE_COVER_COLUMNS:
+        if column not in observations:
+            observations[column] = pd.NA
         observations[column] = pd.to_numeric(observations[column], errors="coerce")
 
     photo_counts = photos.groupby("observation_id").size().rename("manifest_photo_count")
@@ -99,7 +107,9 @@ def build_analysis_table(
         result.groupby("site_id")["estimated_total_vegetation_cover_pct"].diff()
     )
     result["has_cover_estimate"] = result[COVER_COLUMNS].notna().all(axis=1)
-    result["surface_cover_sum_pct"] = result[COVER_COLUMNS].sum(axis=1, min_count=3)
+    result["surface_cover_sum_pct"] = result[SURFACE_COVER_COLUMNS].sum(
+        axis=1, min_count=3
+    )
     result["surface_cover_sum_within_tolerance"] = (
         result["surface_cover_sum_pct"].between(95, 105).where(result["has_cover_estimate"])
     )
@@ -116,7 +126,7 @@ def build_analysis_table(
         "record_origin",
         "review_status",
         "has_cover_estimate",
-        *COVER_COLUMNS,
+        *SURFACE_COVER_COLUMNS,
         "surface_cover_sum_pct",
         "surface_cover_sum_within_tolerance",
         "vegetation_cover_change_pp",
@@ -149,18 +159,27 @@ def build_cover_figure(table: pd.DataFrame, output_path: Path, site_id: str = "1
         "estimated_total_vegetation_cover_pct": "#2F6B3A",
         "bare_ground_pct": "#A65E2E",
         "gravel_rock_pct": "#667085",
+        "litter_mulch_woodchip_pct": "#9B7B4F",
+        "standing_dead_pct": "#C29B6C",
     }
     labels = {
         "estimated_total_vegetation_cover_pct": "Live vegetation",
         "bare_ground_pct": "Bare ground",
         "gravel_rock_pct": "Gravel / rock",
+        "litter_mulch_woodchip_pct": "Litter / mulch / wood chips",
+        "standing_dead_pct": "Standing dead",
     }
 
     fig, ax = plt.subplots(figsize=(12, 6.75), dpi=160)
     fig.patch.set_facecolor("#F7F8F5")
     ax.set_facecolor("#F7F8F5")
 
-    for column in COVER_COLUMNS:
+    plotted_columns = [
+        column
+        for column in SURFACE_COVER_COLUMNS
+        if column in site_rows and site_rows[column].fillna(0).ne(0).any()
+    ]
+    for column in plotted_columns:
         ax.plot(
             site_rows["observation_date"],
             site_rows[column],

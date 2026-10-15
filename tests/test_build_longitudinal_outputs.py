@@ -23,8 +23,10 @@ class BuildLongitudinalOutputsTests(unittest.TestCase):
                     "record_origin": "photo_archive_backfill",
                     "review_status": "partially_reviewed",
                     "estimated_total_vegetation_cover_pct": "60",
-                    "bare_ground_pct": "35",
+                    "bare_ground_pct": "25",
                     "gravel_rock_pct": "5",
+                    "litter_mulch_woodchip_pct": "10",
+                    "standing_dead_pct": "",
                     "source_photo_count": 2,
                     "notes": "Reviewed.",
                 },
@@ -77,6 +79,7 @@ class BuildLongitudinalOutputsTests(unittest.TestCase):
         self.assertTrue(result.iloc[0]["has_cover_estimate"])
         self.assertFalse(result.iloc[1]["has_cover_estimate"])
         self.assertEqual(result.iloc[0]["surface_cover_sum_pct"], 100)
+        self.assertEqual(result.iloc[0]["litter_mulch_woodchip_pct"], 10)
         self.assertEqual(result.iloc[0]["context_photo_count"], 1)
         self.assertEqual(result.iloc[1]["unclassified_photo_count"], 1)
         self.assertEqual(result.iloc[1]["days_since_previous_observation"], 7)
