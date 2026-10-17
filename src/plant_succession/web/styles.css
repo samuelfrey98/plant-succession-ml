@@ -95,6 +95,8 @@ textarea { resize: vertical; }
 .drop-zone span { color: var(--muted); font-size: 12px; }
 .drop-zone input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .file-summary { min-height: 34px; padding: 9px 1px; color: var(--muted); font-size: 12px; }
+.metadata-suggestion { margin: 0 0 12px; padding: 10px 11px; border-left: 3px solid var(--green); background: var(--green-soft); color: #294d37; font-size: 12px; line-height: 1.45; }
+.metadata-suggestion.warning { border-left-color: var(--amber); background: var(--amber-soft); color: #704700; }
 
 .primary-button, .secondary-button, .icon-button {
   min-height: 40px;

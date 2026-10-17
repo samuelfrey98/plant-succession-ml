@@ -59,6 +59,9 @@ def build_service() -> IngestionService:
     archive_dir = Path(
         os.environ.get("PLANT_PHOTO_ARCHIVE", ROOT / "photos")
     ).expanduser()
+    site_anchor_file = Path(
+        os.environ.get("PLANT_SITE_ANCHORS", ROOT / "data" / "raw" / "site_anchors.csv")
+    ).expanduser()
     initialize_public_data(DEFAULT_PUBLIC_DIR, public_dir)
     return IngestionService(
         IngestionPaths(
@@ -66,6 +69,7 @@ def build_service() -> IngestionService:
             schema_dir=ROOT / "data" / "schema",
             state_dir=state_dir,
             archive_dir=archive_dir,
+            site_anchor_file=site_anchor_file,
         )
     )
 
@@ -148,6 +152,36 @@ def create_batch(
     finally:
         for upload in files:
             upload.file.close()
+
+
+@app.post("/api/upload-suggestions", status_code=201)
+def create_upload_suggestion(files: list[UploadFile] = File(...)) -> dict[str, object]:
+    try:
+        uploads = [(upload.filename or "", upload.file) for upload in files]
+        return service.create_upload_suggestion(uploads)
+    except IngestionError as error:
+        raise bad_request(error) from error
+    finally:
+        for upload in files:
+            upload.file.close()
+
+
+@app.post("/api/batches/from-suggestion", status_code=201)
+def create_batch_from_suggestion(
+    upload_token: str = Form(...),
+    site_id: str = Form(...),
+    observation_date: str = Form(...),
+    observation_notes: str = Form(""),
+) -> dict[str, object]:
+    try:
+        return service.create_batch_from_upload_suggestion(
+            upload_token,
+            site_id,
+            observation_date,
+            observation_notes,
+        )
+    except IngestionError as error:
+        raise bad_request(error) from error
 
 
 @app.get("/api/photos/{photo_id}/preview")

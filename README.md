@@ -19,7 +19,7 @@ Current implemented assets:
 
 - 11 monitoring sites, including one later-established sensitive-fern disturbance site
 - A local FastAPI ingestion service with private staging, review queues, and validated publication
-- Content-hash duplicate detection, HEIC previews, EXIF date checks, and versioned candidate labels
+- Content-hash duplicate detection, HEIC previews, private EXIF site/date suggestions, and versioned candidate labels
 - A structured Google Form for site observations
 - A Google Sheets workbook with review, source-note, site-check, and disturbance-event tables
 - Repeatable photo protocols for wide, quadrat, close-up, and context photos
@@ -44,6 +44,10 @@ derived only from explicit field notes or separately documented photo evidence.
 New monitoring rounds can be staged and reviewed through an upload app instead of Google Forms or
 manual CSV editing. Originals stay outside Git, while human-verified roles and deterministic identifiers
 flow into the same validated public tables used by the analysis pipeline.
+
+Selecting photos reads their EXIF capture timestamps and GPS coordinates, then prefills the most likely
+observation date and monitoring site. Exact site anchors remain in an ignored private file, suggestions
+show confidence and distance, and the user confirms or corrects both fields before staging.
 
 ![Plant Succession local ingestion queue](docs/screenshots/ingestion_app.png)
 
