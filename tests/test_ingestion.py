@@ -19,7 +19,11 @@ from plant_succession.ingestion import (  # noqa: E402
     IngestionError,
     IngestionPaths,
     IngestionService,
+    PhotoMetadata,
+    SiteAnchor,
+    extract_photo_metadata,
     infer_photo_type,
+    suggest_batch_metadata,
 )
 from plant_succession.app import initialize_public_data, valid_basic_auth  # noqa: E402
 from plant_succession.validate import validate_public_photo_data  # noqa: E402
@@ -28,6 +32,15 @@ from plant_succession.validate import validate_public_photo_data  # noqa: E402
 def image_bytes(color: tuple[int, int, int]) -> io.BytesIO:
     output = io.BytesIO()
     Image.new("RGB", (80, 60), color).save(output, "JPEG")
+    output.seek(0)
+    return output
+
+
+def dated_image_bytes(captured_at: str) -> io.BytesIO:
+    output = io.BytesIO()
+    exif = Image.Exif()
+    exif[306] = captured_at
+    Image.new("RGB", (80, 60), (20, 80, 40)).save(output, "JPEG", exif=exif)
     output.seek(0)
     return output
 
@@ -154,6 +167,82 @@ class IngestionServiceTests(unittest.TestCase):
         self.assertFalse(valid_basic_auth(invalid, "samuel", "correct horse"))
         self.assertFalse(valid_basic_auth("Basic not-base64", "samuel", "correct horse"))
         self.assertFalse(valid_basic_auth(None, "samuel", "correct horse"))
+
+    def test_metadata_suggestion_votes_for_nearest_site_and_capture_date(self):
+        anchors = [
+            SiteAnchor("1", 40.00000, -75.00000),
+            SiteAnchor("2", 39.99945, -74.99882),
+        ]
+        photos = [
+            PhotoMetadata("wide.heic", "2026-05-25T18:52:13", 40.000016, -74.999992),
+            PhotoMetadata("left.heic", "2026-05-25T18:52:16", 40.000010, -75.000000),
+            PhotoMetadata("close.heic", "2026-05-25T18:52:20", None, None),
+        ]
+
+        suggestion = suggest_batch_metadata(photos, anchors)
+
+        self.assertEqual(suggestion["site_id"], "1")
+        self.assertEqual(suggestion["site_confidence"], "high")
+        self.assertEqual(suggestion["observation_date"], "2026-05-25")
+        self.assertEqual(suggestion["date_confidence"], "high")
+        self.assertLess(suggestion["median_distance_meters"], 3)
+        self.assertGreater(suggestion["median_runner_up_margin_meters"], 50)
+
+    def test_metadata_suggestion_downgrades_close_anchor_call(self):
+        anchors = [
+            SiteAnchor("5", 40.00000, -75.00000),
+            SiteAnchor("6", 40.00010, -75.00037),
+        ]
+        photos = [
+            PhotoMetadata("wide.heic", "2026-06-03T10:00:00", 40.00005, -75.000185),
+        ]
+
+        suggestion = suggest_batch_metadata(photos, anchors)
+
+        self.assertIn(suggestion["site_id"], {"5", "6"})
+        self.assertEqual(suggestion["site_confidence"], "low")
+        self.assertLess(suggestion["median_runner_up_margin_meters"], 5)
+        self.assertTrue(any("close to another" in item for item in suggestion["warnings"]))
+
+    def test_metadata_suggestion_flags_photos_split_across_sites(self):
+        anchors = [
+            SiteAnchor("1", 40.00000, -75.00000),
+            SiteAnchor("2", 39.99945, -74.99882),
+        ]
+        photos = [
+            PhotoMetadata("one.heic", "2026-05-25T10:00:00", 40.00000, -75.00000),
+            PhotoMetadata("two.heic", "2026-05-26T10:00:00", 39.99945, -74.99882),
+        ]
+
+        suggestion = suggest_batch_metadata(photos, anchors)
+
+        self.assertIsNone(suggestion["site_id"])
+        self.assertIsNone(suggestion["observation_date"])
+        self.assertTrue(any("multiple sites" in warning for warning in suggestion["warnings"]))
+        self.assertTrue(any("multiple capture dates" in warning for warning in suggestion["warnings"]))
+
+    def test_exif_capture_date_is_extracted(self):
+        path = self.root / "dated.jpg"
+        path.write_bytes(dated_image_bytes("2026:07:20 14:12:03").getvalue())
+
+        metadata = extract_photo_metadata(path, "dated.jpg")
+
+        self.assertEqual(metadata.captured_at, "2026-07-20T14:12:03")
+
+    def test_prepared_upload_is_staged_without_uploading_files_twice(self):
+        prepared = self.service.create_upload_suggestion(
+            [("wide.jpg", dated_image_bytes("2026:07:20 14:12:03"))]
+        )
+        token = str(prepared["upload_token"])
+        self.assertEqual(prepared["observation_date"], "2026-07-20")
+        self.assertTrue((self.service.paths.suggestion_dir / token).exists())
+
+        batch = self.service.create_batch_from_upload_suggestion(
+            token, "1", "2026-07-20", "Prepared upload test."
+        )
+
+        self.assertEqual(batch["photo_count"], 1)
+        self.assertFalse((self.service.paths.suggestion_dir / token).exists())
 
 
 if __name__ == "__main__":

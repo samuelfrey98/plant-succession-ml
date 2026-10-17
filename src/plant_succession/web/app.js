@@ -3,6 +3,8 @@ const state = {
   sites: [],
   selectedBatch: null,
   filter: "active",
+  uploadToken: null,
+  preparationId: 0,
 };
 
 const photoTypes = [
@@ -213,15 +215,23 @@ async function uploadBatch(event) {
     showToast("Choose at least one photo.", true);
     return;
   }
+  if (!state.uploadToken) {
+    showToast("Wait for photo metadata preparation to finish.", true);
+    return;
+  }
   button.disabled = true;
   button.innerHTML = '<i data-lucide="loader-circle" aria-hidden="true"></i> Staging photos...';
   iconRefresh();
   try {
     const form = new FormData(event.target);
-    state.selectedBatch = await api("/api/batches", {method: "POST", body: form});
+    form.delete("files");
+    form.append("upload_token", state.uploadToken);
+    state.selectedBatch = await api("/api/batches/from-suggestion", {method: "POST", body: form});
+    state.uploadToken = null;
     event.target.reset();
     document.querySelector("#observation-date").valueAsDate = new Date();
     document.querySelector("#file-summary").textContent = "No files selected";
+    document.querySelector("#metadata-suggestion").classList.add("hidden");
     await loadDashboard();
     renderReview();
     showToast(`Staged ${state.selectedBatch.photo_count} photos.`);
@@ -231,6 +241,60 @@ async function uploadBatch(event) {
     button.disabled = false;
     button.innerHTML = '<i data-lucide="upload" aria-hidden="true"></i> Stage batch';
     iconRefresh();
+  }
+}
+
+function renderMetadataSuggestion(result) {
+  const target = document.querySelector("#metadata-suggestion");
+  const parts = [];
+  if (result.site_id) {
+    const distance = result.median_distance_meters === null
+      ? ""
+      : `, median ${result.median_distance_meters} m from anchor`;
+    parts.push(`${siteLabel(result.site_id)} (${result.site_confidence} confidence${distance})`);
+    document.querySelector("#site-id").value = String(result.site_id);
+  }
+  if (result.observation_date) {
+    parts.push(`${result.observation_date} (${result.date_confidence} confidence)`);
+    document.querySelector("#observation-date").value = result.observation_date;
+  }
+  const warningText = result.warnings.length ? ` ${result.warnings.join(" ")}` : "";
+  target.textContent = parts.length
+    ? `Suggested ${parts.join(" and ")}. Confirm before staging.${warningText}`
+    : `No site or date could be suggested.${warningText}`;
+  target.classList.remove("hidden");
+  target.classList.toggle("warning", Boolean(result.warnings.length) || result.site_confidence === "low" || result.date_confidence === "low");
+}
+
+async function prepareUpload(files) {
+  const button = document.querySelector("#upload-button");
+  const target = document.querySelector("#metadata-suggestion");
+  const preparationId = ++state.preparationId;
+  state.uploadToken = null;
+  target.textContent = "Reading capture time and location metadata...";
+  target.classList.remove("hidden", "warning");
+  button.disabled = true;
+  button.innerHTML = '<i data-lucide="loader-circle" aria-hidden="true"></i> Preparing photos...';
+  iconRefresh();
+  try {
+    const form = new FormData();
+    files.forEach((file) => form.append("files", file));
+    const result = await api("/api/upload-suggestions", {method: "POST", body: form});
+    if (preparationId !== state.preparationId) return;
+    state.uploadToken = result.upload_token;
+    renderMetadataSuggestion(result);
+  } catch (error) {
+    if (preparationId !== state.preparationId) return;
+    target.textContent = error.message;
+    target.classList.remove("hidden");
+    target.classList.add("warning");
+    showToast(error.message, true);
+  } finally {
+    if (preparationId === state.preparationId) {
+      button.disabled = !state.uploadToken;
+      button.innerHTML = '<i data-lucide="upload" aria-hidden="true"></i> Stage batch';
+      iconRefresh();
+    }
   }
 }
 
@@ -262,11 +326,18 @@ function setupFilePicker() {
   const input = document.querySelector("#files");
   const summary = document.querySelector("#file-summary");
   const zone = document.querySelector("#drop-zone");
-  input.addEventListener("change", () => {
+  input.addEventListener("change", async () => {
     const total = [...input.files].reduce((sum, file) => sum + file.size, 0);
     summary.textContent = input.files.length
       ? `${input.files.length} files | ${(total / 1024 / 1024).toFixed(1)} MB`
       : "No files selected";
+    if (input.files.length) {
+      await prepareUpload([...input.files]);
+    } else {
+      state.uploadToken = null;
+      state.preparationId += 1;
+      document.querySelector("#metadata-suggestion").classList.add("hidden");
+    }
   });
   ["dragenter", "dragover"].forEach((name) => zone.addEventListener(name, () => zone.classList.add("dragging")));
   ["dragleave", "drop"].forEach((name) => zone.addEventListener(name, () => zone.classList.remove("dragging")));

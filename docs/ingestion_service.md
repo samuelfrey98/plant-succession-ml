@@ -19,6 +19,12 @@ Open `http://127.0.0.1:8765`. The service binds only to the local loopback inter
 Browser upload
       |
       v
+private upload cache + EXIF site/date suggestion
+      |
+      v
+human site/date confirmation
+      |
+      v
 private staging + SHA-256 duplicate check
       |
       v
@@ -44,6 +50,8 @@ atomic CSV publication + private photo archive
 
 - `data/raw/ingestion/ingestion.sqlite`: local batch and review state; ignored by Git
 - `data/raw/ingestion/batches/`: staged originals and optimized previews; ignored by Git
+- `data/raw/ingestion/upload_suggestions/`: temporary pre-staging uploads; ignored by Git and expired after 24 hours
+- `data/raw/site_anchors.csv`: exact private site coordinates used only for GPS matching; ignored by Git
 - `photos/`: published private originals in deterministic site/date paths; ignored by Git
 - `data/public/`: sanitized, validated metadata snapshots committed to Git
 
@@ -52,9 +60,35 @@ Set `PLANT_INGESTION_STATE` or `PLANT_PHOTO_ARCHIVE` to use different local stor
 ```bash
 export PLANT_INGESTION_STATE="$HOME/PlantSuccession/ingestion"
 export PLANT_PHOTO_ARCHIVE="$HOME/PlantSuccession/photos"
+export PLANT_SITE_ANCHORS="$HOME/PlantSuccession/site_anchors.csv"
 ```
 
 The service never exposes Drive IDs, private links, or exact coordinates in the public manifest.
+
+## Site And Date Suggestions
+
+The browser uploads a selected photo set once into private temporary storage. The service reads iPhone
+EXIF metadata, votes across the available photos, and prefills:
+
+- the observation date from the dominant capture date
+- the site from the nearest private coordinate anchor
+- confidence, median anchor distance, and mixed-date or mixed-site warnings
+
+The suggestion is never treated as ground truth. Site and date remain editable and must be confirmed
+before the temporary upload becomes a staging batch. A 150 m maximum match distance prevents remote GPS
+records from being assigned to a monitoring site, while close sites can still produce a low-confidence
+suggestion for human review.
+
+Build the ignored private anchor file from the original workbook without copying coordinates into the
+public site registry:
+
+```bash
+.venv/bin/python scripts/build_private_site_anchors.py \
+  "/path/to/Plant Succession ML Project.xlsx"
+```
+
+The expected private CSV columns are `site_id`, `latitude`, and `longitude`. The current local file was
+generated from the workbook's `Site Registry` sheet and contains all 11 sites.
 
 ## Render Deployment
 
@@ -114,6 +148,8 @@ The service is idempotent for an already-published batch and detects repeat file
 FastAPI publishes interactive API documentation at `http://127.0.0.1:8765/docs`.
 
 - `POST /api/batches`: stage one site/date upload batch
+- `POST /api/upload-suggestions`: cache photos and return EXIF-derived site/date suggestions
+- `POST /api/batches/from-suggestion`: confirm site/date and stage an already cached upload
 - `GET /api/batches/{batch_id}`: retrieve candidates and review state
 - `PATCH /api/photos/{photo_id}`: submit a human-verified role
 - `POST /api/batches/{batch_id}/accept-suggestions`: accept explicit filename suggestions

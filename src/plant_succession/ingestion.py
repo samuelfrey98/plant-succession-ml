@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import json
+import math
 import os
 import re
 import shutil
@@ -11,10 +13,12 @@ import sqlite3
 import tempfile
 import threading
 import uuid
-from contextlib import contextmanager
+from collections import Counter
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
+from statistics import median
 from typing import BinaryIO, Iterable, Iterator
 
 from PIL import Image, ImageOps
@@ -38,6 +42,9 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp"}
 MAX_FILE_BYTES = 50 * 1024 * 1024
 CHUNK_SIZE = 1024 * 1024
 TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
+UPLOAD_TOKEN_PATTERN = re.compile(r"^[a-f0-9]{32}$")
+MAX_SITE_MATCH_DISTANCE_METERS = 150.0
+UPLOAD_SUGGESTION_MAX_AGE_SECONDS = 24 * 60 * 60
 
 
 class IngestionError(ValueError):
@@ -53,11 +60,27 @@ class CandidateLabel:
 
 
 @dataclass(frozen=True)
+class SiteAnchor:
+    site_id: str
+    latitude: float
+    longitude: float
+
+
+@dataclass(frozen=True)
+class PhotoMetadata:
+    filename: str
+    captured_at: str | None
+    latitude: float | None
+    longitude: float | None
+
+
+@dataclass(frozen=True)
 class IngestionPaths:
     public_dir: Path
     schema_dir: Path
     state_dir: Path
     archive_dir: Path
+    site_anchor_file: Path | None = None
 
     @property
     def database(self) -> Path:
@@ -66,6 +89,10 @@ class IngestionPaths:
     @property
     def batch_dir(self) -> Path:
         return self.state_dir / "batches"
+
+    @property
+    def suggestion_dir(self) -> Path:
+        return self.state_dir / "upload_suggestions"
 
 
 def utc_now() -> str:
@@ -109,6 +136,242 @@ def infer_photo_type(filename: str) -> CandidateLabel:
     )
 
 
+def _exif_capture_time(exif: object) -> str | None:
+    mappings = []
+    try:
+        mappings.append(exif.get_ifd(34665))  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    mappings.append(exif)
+    for mapping in mappings:
+        for tag in (36867, 36868, 306):
+            try:
+                raw = mapping.get(tag)  # type: ignore[attr-defined]
+            except Exception:
+                raw = None
+            if not raw:
+                continue
+            try:
+                return datetime.strptime(str(raw), "%Y:%m:%d %H:%M:%S").isoformat(
+                    timespec="seconds"
+                )
+            except ValueError:
+                continue
+    return None
+
+
+def _gps_coordinates(exif: object) -> tuple[float | None, float | None]:
+    try:
+        gps = exif.get_ifd(34853)  # type: ignore[attr-defined]
+    except Exception:
+        return None, None
+    try:
+        latitude_values = gps.get(2)
+        longitude_values = gps.get(4)
+        if not latitude_values or not longitude_values:
+            return None, None
+        latitude = float(latitude_values[0]) + float(latitude_values[1]) / 60
+        latitude += float(latitude_values[2]) / 3600
+        longitude = float(longitude_values[0]) + float(longitude_values[1]) / 60
+        longitude += float(longitude_values[2]) / 3600
+        latitude_ref = str(gps.get(1, "N")).upper()
+        longitude_ref = str(gps.get(3, "E")).upper()
+        if latitude_ref == "S":
+            latitude *= -1
+        if longitude_ref == "W":
+            longitude *= -1
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            return None, None
+        return latitude, longitude
+    except (IndexError, TypeError, ValueError, ZeroDivisionError):
+        return None, None
+
+
+def extract_photo_metadata(path: Path, source_filename: str) -> PhotoMetadata:
+    try:
+        with Image.open(path) as image:
+            exif = image.getexif()
+            latitude, longitude = _gps_coordinates(exif)
+            return PhotoMetadata(
+                filename=source_filename,
+                captured_at=_exif_capture_time(exif),
+                latitude=latitude,
+                longitude=longitude,
+            )
+    except Exception:
+        return PhotoMetadata(source_filename, None, None, None)
+
+
+def haversine_meters(
+    latitude_a: float,
+    longitude_a: float,
+    latitude_b: float,
+    longitude_b: float,
+) -> float:
+    radius_meters = 6_371_008.8
+    latitude_a_rad = math.radians(latitude_a)
+    latitude_b_rad = math.radians(latitude_b)
+    latitude_delta = math.radians(latitude_b - latitude_a)
+    longitude_delta = math.radians(longitude_b - longitude_a)
+    haversine = math.sin(latitude_delta / 2) ** 2
+    haversine += (
+        math.cos(latitude_a_rad)
+        * math.cos(latitude_b_rad)
+        * math.sin(longitude_delta / 2) ** 2
+    )
+    return radius_meters * 2 * math.atan2(math.sqrt(haversine), math.sqrt(1 - haversine))
+
+
+def suggest_batch_metadata(
+    photos: list[PhotoMetadata], anchors: list[SiteAnchor]
+) -> dict[str, object]:
+    warnings: list[str] = []
+    file_results: list[dict[str, object]] = []
+    location_rows = [
+        photo for photo in photos if photo.latitude is not None and photo.longitude is not None
+    ]
+    site_votes: Counter[str] = Counter()
+    nearest_by_index: dict[int, tuple[str, float]] = {}
+    margin_by_index: dict[int, float | None] = {}
+    for index, photo in enumerate(photos):
+        if photo.latitude is None or photo.longitude is None:
+            continue
+        distances = sorted(
+            (
+                (
+                    anchor.site_id,
+                    haversine_meters(
+                        float(photo.latitude),
+                        float(photo.longitude),
+                        anchor.latitude,
+                        anchor.longitude,
+                    ),
+                )
+                for anchor in anchors
+            ),
+            key=lambda item: item[1],
+        )
+        if distances:
+            nearest_by_index[index] = distances[0]
+            margin_by_index[index] = (
+                distances[1][1] - distances[0][1] if len(distances) > 1 else None
+            )
+            if distances[0][1] <= MAX_SITE_MATCH_DISTANCE_METERS:
+                site_votes[distances[0][0]] += 1
+
+    suggested_site: str | None = None
+    site_confidence: str | None = None
+    median_distance: float | None = None
+    median_margin: float | None = None
+    vote_fraction: float | None = None
+    if site_votes:
+        ranked_votes = site_votes.most_common()
+        if len(ranked_votes) > 1 and ranked_votes[0][1] == ranked_votes[1][1]:
+            warnings.append("GPS metadata is split evenly across multiple sites.")
+        else:
+            suggested_site = ranked_votes[0][0]
+            winning_count = ranked_votes[0][1]
+            vote_fraction = winning_count / sum(site_votes.values())
+            winning_distances = [
+                distance
+                for site_id, distance in nearest_by_index.values()
+                if site_id == suggested_site
+            ]
+            median_distance = median(winning_distances)
+            winning_margins = [
+                margin_by_index[index]
+                for index, (site_id, _) in nearest_by_index.items()
+                if site_id == suggested_site and margin_by_index[index] is not None
+            ]
+            median_margin = median(winning_margins) if winning_margins else None
+            has_clear_high_margin = median_margin is None or median_margin >= 15
+            has_clear_medium_margin = median_margin is None or median_margin >= 5
+            if vote_fraction == 1 and median_distance <= 25 and has_clear_high_margin:
+                site_confidence = "high"
+            elif (
+                vote_fraction >= 0.75
+                and median_distance <= 75
+                and has_clear_medium_margin
+            ):
+                site_confidence = "medium"
+            else:
+                site_confidence = "low"
+            if median_margin is not None and median_margin < 15:
+                warnings.append(
+                    "The nearest site is close to another site anchor; confirm the site manually."
+                )
+    elif location_rows and not anchors:
+        warnings.append("GPS is present, but the private site-anchor file is unavailable.")
+    elif location_rows:
+        warnings.append("GPS locations are not close enough to a known monitoring site.")
+    else:
+        warnings.append("No usable GPS metadata was found in the selected photos.")
+
+    if len(site_votes) > 1:
+        distribution = ", ".join(
+            f"Site {site_id}: {count}" for site_id, count in site_votes.most_common()
+        )
+        warnings.append(f"The selected photos may span multiple sites ({distribution}).")
+
+    captured_dates = [photo.captured_at[:10] for photo in photos if photo.captured_at]
+    date_votes = Counter(captured_dates)
+    suggested_date: str | None = None
+    date_confidence: str | None = None
+    if date_votes:
+        ranked_dates = date_votes.most_common()
+        if len(ranked_dates) > 1 and ranked_dates[0][1] == ranked_dates[1][1]:
+            warnings.append("Capture timestamps are split evenly across multiple dates.")
+        else:
+            suggested_date, date_count = ranked_dates[0]
+            date_fraction = date_count / len(captured_dates)
+            if date_fraction == 1:
+                date_confidence = "high"
+            elif date_fraction >= 0.75:
+                date_confidence = "medium"
+            else:
+                date_confidence = "low"
+        if len(date_votes) > 1:
+            distribution = ", ".join(
+                f"{captured_date}: {count}"
+                for captured_date, count in date_votes.most_common()
+            )
+            warnings.append(f"The selected photos contain multiple capture dates ({distribution}).")
+    else:
+        warnings.append("No usable capture timestamp was found in the selected photos.")
+
+    for index, photo in enumerate(photos):
+        nearest = nearest_by_index.get(index)
+        file_results.append(
+            {
+                "filename": photo.filename,
+                "captured_at": photo.captured_at,
+                "gps_present": photo.latitude is not None and photo.longitude is not None,
+                "nearest_site_id": nearest[0] if nearest else None,
+                "distance_meters": round(nearest[1], 1) if nearest else None,
+                "runner_up_margin_meters": round(margin_by_index[index], 1)
+                if margin_by_index.get(index) is not None
+                else None,
+            }
+        )
+
+    return {
+        "site_id": suggested_site,
+        "site_confidence": site_confidence,
+        "site_vote_fraction": round(vote_fraction, 2) if vote_fraction is not None else None,
+        "median_distance_meters": round(median_distance, 1)
+        if median_distance is not None
+        else None,
+        "median_runner_up_margin_meters": round(median_margin, 1)
+        if median_margin is not None
+        else None,
+        "observation_date": suggested_date,
+        "date_confidence": date_confidence,
+        "gps_photo_count": len(location_rows),
+        "capture_time_count": len(captured_dates),
+        "anchor_count": len(anchors),
+        "warnings": warnings,
+        "files": file_results,
+    }
 def read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -146,6 +409,7 @@ class IngestionService:
         self._publish_lock = threading.Lock()
         self.paths.state_dir.mkdir(parents=True, exist_ok=True)
         self.paths.batch_dir.mkdir(parents=True, exist_ok=True)
+        self.paths.suggestion_dir.mkdir(parents=True, exist_ok=True)
         self.paths.archive_dir.mkdir(parents=True, exist_ok=True)
         self._initialize_database()
 
@@ -218,6 +482,144 @@ class IngestionService:
             for row in rows
             if row.get("active", "").strip().lower() != "false"
         ]
+
+    def _read_site_anchors(self) -> list[SiteAnchor]:
+        path = self.paths.site_anchor_file
+        if path is None or not path.exists():
+            return []
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            rows = list(csv.DictReader(handle))
+        anchors: list[SiteAnchor] = []
+        known_sites = {site["site_id"] for site in self.list_sites()}
+        for row_number, row in enumerate(rows, start=2):
+            site_id = str(row.get("site_id", "")).strip()
+            if site_id not in known_sites:
+                raise IngestionError(
+                    f"Private site-anchor row {row_number} has unknown site_id '{site_id}'."
+                )
+            try:
+                latitude = float(row.get("latitude", ""))
+                longitude = float(row.get("longitude", ""))
+            except (TypeError, ValueError) as exc:
+                raise IngestionError(
+                    f"Private site-anchor row {row_number} has invalid coordinates."
+                ) from exc
+            if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+                raise IngestionError(
+                    f"Private site-anchor row {row_number} has out-of-range coordinates."
+                )
+            anchors.append(SiteAnchor(site_id, latitude, longitude))
+        if len({anchor.site_id for anchor in anchors}) != len(anchors):
+            raise IngestionError("Private site-anchor file contains a duplicate site_id.")
+        return anchors
+
+    def _cleanup_upload_suggestions(self) -> None:
+        cutoff = datetime.now(timezone.utc).timestamp() - UPLOAD_SUGGESTION_MAX_AGE_SECONDS
+        for path in self.paths.suggestion_dir.iterdir():
+            if path.is_dir() and path.stat().st_mtime < cutoff:
+                shutil.rmtree(path, ignore_errors=True)
+
+    def create_upload_suggestion(
+        self, uploads: Iterable[tuple[str, BinaryIO]]
+    ) -> dict[str, object]:
+        """Cache uploads once and infer a reviewable site/date from EXIF metadata."""
+
+        self._cleanup_upload_suggestions()
+        upload_token = uuid.uuid4().hex
+        suggestion_root = self.paths.suggestion_dir / upload_token
+        suggestion_root.mkdir(parents=True)
+        records: list[dict[str, object]] = []
+        metadata_rows: list[PhotoMetadata] = []
+        try:
+            for index, (filename, stream) in enumerate(uploads, start=1):
+                safe_name = sanitize_filename(filename)
+                extension = Path(safe_name).suffix.casefold()
+                if extension not in ALLOWED_EXTENSIONS:
+                    allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
+                    raise IngestionError(
+                        f"Unsupported file '{safe_name}'. Allowed extensions: {allowed}."
+                    )
+                stored_filename = f"{index:04d}_{uuid.uuid4().hex[:8]}{extension}"
+                stored_path = suggestion_root / stored_filename
+                size = 0
+                with stored_path.open("wb") as destination:
+                    while chunk := stream.read(CHUNK_SIZE):
+                        size += len(chunk)
+                        if size > self.max_file_bytes:
+                            raise IngestionError(f"'{safe_name}' exceeds the 50 MB upload limit.")
+                        destination.write(chunk)
+                metadata_rows.append(extract_photo_metadata(stored_path, safe_name))
+                records.append(
+                    {
+                        "source_filename": safe_name,
+                        "stored_filename": stored_filename,
+                        "file_size_bytes": size,
+                    }
+                )
+            if not records:
+                raise IngestionError("Choose at least one supported photo.")
+            manifest = {
+                "upload_token": upload_token,
+                "created_at": utc_now(),
+                "files": records,
+            }
+            temporary_manifest = suggestion_root / ".metadata.json"
+            temporary_manifest.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+            )
+            os.replace(temporary_manifest, suggestion_root / "metadata.json")
+        except Exception:
+            shutil.rmtree(suggestion_root, ignore_errors=True)
+            raise
+
+        result = suggest_batch_metadata(metadata_rows, self._read_site_anchors())
+        result["upload_token"] = upload_token
+        result["uploaded_photo_count"] = len(records)
+        result["uploaded_bytes"] = sum(int(record["file_size_bytes"]) for record in records)
+        return result
+
+    def create_batch_from_upload_suggestion(
+        self,
+        upload_token: str,
+        site_id: str,
+        observation_date: str,
+        observation_notes: str,
+    ) -> dict[str, object]:
+        if not UPLOAD_TOKEN_PATTERN.fullmatch(upload_token):
+            raise IngestionError("The prepared upload token is invalid.")
+        suggestion_root = self.paths.suggestion_dir / upload_token
+        manifest_path = suggestion_root / "metadata.json"
+        if not manifest_path.exists():
+            raise IngestionError("The prepared upload has expired or no longer exists.")
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            created_at = datetime.fromisoformat(str(manifest["created_at"]))
+            age = (datetime.now(timezone.utc) - created_at).total_seconds()
+            if age > UPLOAD_SUGGESTION_MAX_AGE_SECONDS:
+                shutil.rmtree(suggestion_root, ignore_errors=True)
+                raise IngestionError("The prepared upload expired; choose the photos again.")
+            file_records = manifest["files"]
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise IngestionError("The prepared upload metadata is unreadable.") from exc
+        if not isinstance(file_records, list) or not file_records:
+            raise IngestionError("The prepared upload metadata has no photos.")
+        if not all(isinstance(record, dict) for record in file_records):
+            raise IngestionError("The prepared upload metadata is unreadable.")
+
+        with ExitStack() as stack:
+            uploads: list[tuple[str, BinaryIO]] = []
+            for record in file_records:
+                source_filename = str(record.get("source_filename", ""))
+                stored_filename = sanitize_filename(str(record.get("stored_filename", "")))
+                path = suggestion_root / stored_filename
+                if not path.is_file():
+                    raise IngestionError(
+                        f"Prepared photo '{source_filename}' is missing; choose the photos again."
+                    )
+                uploads.append((source_filename, stack.enter_context(path.open("rb"))))
+            batch = self.create_batch(site_id, observation_date, observation_notes, uploads)
+        shutil.rmtree(suggestion_root, ignore_errors=True)
+        return batch
 
     def create_batch(
         self,
@@ -387,14 +789,7 @@ class IngestionService:
 
     @staticmethod
     def _captured_at(image: Image.Image) -> str | None:
-        try:
-            raw = image.getexif().get(36867) or image.getexif().get(306)
-            if not raw:
-                return None
-            parsed = datetime.strptime(str(raw), "%Y:%m:%d %H:%M:%S")
-            return parsed.isoformat(timespec="seconds")
-        except (TypeError, ValueError):
-            return None
+        return _exif_capture_time(image.getexif())
 
     def dashboard(self) -> dict[str, object]:
         with self._connection() as connection:
