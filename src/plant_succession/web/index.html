@@ -86,8 +86,8 @@
             <strong id="metric-review">0</strong>
           </div>
           <div class="metric">
-            <span>Unresolved photos</span>
-            <strong id="metric-photos">0</strong>
+            <span>Observation review</span>
+            <strong id="metric-observations">0</strong>
           </div>
           <div class="metric">
             <span>Ready</span>
@@ -137,7 +137,75 @@
             <div class="progress-track"><span id="progress-bar"></span></div>
             <span id="progress-label">0 of 0 reviewed</span>
           </div>
-          <div class="photo-grid" id="photo-grid"></div>
+          <div class="review-tabs" role="tablist" aria-label="Batch review stages">
+            <button class="review-tab active" id="photos-tab" data-review-view="photos" type="button" role="tab" aria-controls="photo-review-panel">Photos</button>
+            <button class="review-tab" id="observation-tab" data-review-view="observation" type="button" role="tab" aria-controls="observation-review-panel">Observation</button>
+          </div>
+
+          <section id="photo-review-panel" role="tabpanel" aria-labelledby="photos-tab">
+            <div class="photo-grid" id="photo-grid"></div>
+          </section>
+
+          <section class="observation-review-panel hidden" id="observation-review-panel" role="tabpanel" aria-labelledby="observation-tab">
+            <div class="observation-stage-note" id="observation-stage-note"></div>
+            <form id="observation-review-form">
+              <fieldset>
+                <legend>Surface cover</legend>
+                <div class="cover-grid">
+                  <label>Vegetation <span>%</span><input name="estimated_total_vegetation_cover_pct" type="number" min="0" max="100" step="1" inputmode="numeric"></label>
+                  <label>Bare ground <span>%</span><input name="bare_ground_pct" type="number" min="0" max="100" step="1" inputmode="numeric"></label>
+                  <label>Gravel / rock <span>%</span><input name="gravel_rock_pct" type="number" min="0" max="100" step="1" inputmode="numeric"></label>
+                  <label>Litter / mulch <span>%</span><input name="litter_mulch_woodchip_pct" type="number" min="0" max="100" step="1" inputmode="numeric"></label>
+                  <label>Standing dead <span>%</span><input name="standing_dead_pct" type="number" min="0" max="100" step="1" inputmode="numeric"></label>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>Taxa</legend>
+                <div class="taxon-grid taxon-grid-head" aria-hidden="true">
+                  <span>Role and label</span><span>Rank</span><span>Confidence</span><span>Flowering</span><span>Seed set</span>
+                </div>
+                <div class="taxon-grid">
+                  <label>Dominant<input name="dominant_species" type="text" placeholder="Best defensible label"></label>
+                  <label>Rank<select name="dominant_taxon_rank"><option value="">Not assessed</option><option value="species">Species</option><option value="genus">Genus</option><option value="family">Family</option><option value="unknown">Unknown</option><option value="morphotype">Morphotype</option></select></label>
+                  <label>Confidence<select name="dominant_species_confidence"><option value="">Not assessed</option><option value="confident">Confident</option><option value="likely">Likely</option><option value="uncertain">Uncertain</option></select></label>
+                  <label>Flowering<select name="dominant_flowering"><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>
+                  <label>Seed set<select name="dominant_seed_set"><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>
+                </div>
+                <div class="taxon-grid">
+                  <label>Secondary<input name="secondary_species" type="text" placeholder="Optional label"></label>
+                  <label>Rank<select name="secondary_taxon_rank"><option value="">Not assessed</option><option value="species">Species</option><option value="genus">Genus</option><option value="family">Family</option><option value="unknown">Unknown</option><option value="morphotype">Morphotype</option></select></label>
+                  <label>Confidence<select name="secondary_species_confidence"><option value="">Not assessed</option><option value="confident">Confident</option><option value="likely">Likely</option><option value="uncertain">Uncertain</option></select></label>
+                  <label>Flowering<select name="secondary_flowering"><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>
+                  <label>Seed set<select name="secondary_seed_set"><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>
+                </div>
+                <div class="taxon-grid">
+                  <label>Tertiary<input name="tertiary_species" type="text" placeholder="Optional label"></label>
+                  <label>Rank<select name="tertiary_taxon_rank"><option value="">Not assessed</option><option value="species">Species</option><option value="genus">Genus</option><option value="family">Family</option><option value="unknown">Unknown</option><option value="morphotype">Morphotype</option></select></label>
+                  <label>Confidence<select name="tertiary_species_confidence"><option value="">Not assessed</option><option value="confident">Confident</option><option value="likely">Likely</option><option value="uncertain">Uncertain</option></select></label>
+                  <label>Flowering<select name="tertiary_flowering"><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>
+                  <label>Seed set<select name="tertiary_seed_set"><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>Interpretation and completeness</legend>
+                <div class="interpretation-grid">
+                  <label>New taxon detected<select name="new_species_detected"><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>
+                  <label>Successional stage<select name="successional_stage"><option value="">Not assessed</option><option value="early_colonization">Early colonization</option><option value="developing_herb_layer">Developing herb layer</option><option value="dense_herb_layer">Dense herb layer</option><option value="shrub_establishment">Shrub establishment</option><option value="young_woodland">Young woodland</option></select></label>
+                  <label>Review result<select name="completion_status"><option value="partially_reviewed">Partial: some fields unavailable</option><option value="reviewed">Reviewed: all available evidence assessed</option></select></label>
+                </div>
+                <label>Observation notes<textarea name="notes" rows="3" placeholder="Visible conditions, uncertainty, or context"></textarea></label>
+                <label>Completeness note<textarea name="completeness_notes" rows="2" placeholder="Required when completing a partial review"></textarea></label>
+              </fieldset>
+
+              <div class="observation-actions">
+                <span id="observation-save-state"></span>
+                <button class="secondary-button" data-observation-action="draft" type="submit"><i data-lucide="save" aria-hidden="true"></i> Save draft</button>
+                <button class="primary-button" data-observation-action="complete" type="submit"><i data-lucide="circle-check" aria-hidden="true"></i> Complete review</button>
+              </div>
+            </form>
+          </section>
         </section>
       </section>
     </main>

@@ -46,6 +46,68 @@ UPLOAD_TOKEN_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 MAX_SITE_MATCH_DISTANCE_METERS = 150.0
 UPLOAD_SUGGESTION_MAX_AGE_SECONDS = 24 * 60 * 60
 REVIEW_ACTOR_TYPES = {"human", "ai_assistant", "model", "rule", "legacy_unknown"}
+OBSERVATION_PERCENT_FIELDS = (
+    "estimated_total_vegetation_cover_pct",
+    "bare_ground_pct",
+    "gravel_rock_pct",
+    "litter_mulch_woodchip_pct",
+    "standing_dead_pct",
+)
+OBSERVATION_BOOLEAN_FIELDS = (
+    "dominant_flowering",
+    "dominant_seed_set",
+    "secondary_flowering",
+    "secondary_seed_set",
+    "tertiary_flowering",
+    "tertiary_seed_set",
+    "new_species_detected",
+)
+OBSERVATION_TEXT_FIELDS = (
+    "dominant_species",
+    "secondary_species",
+    "tertiary_species",
+    "notes",
+    "completeness_notes",
+)
+OBSERVATION_CATEGORY_FIELDS = {
+    "dominant_taxon_rank": {"species", "genus", "family", "unknown", "morphotype"},
+    "secondary_taxon_rank": {"species", "genus", "family", "unknown", "morphotype"},
+    "tertiary_taxon_rank": {"species", "genus", "family", "unknown", "morphotype"},
+    "dominant_species_confidence": {"confident", "likely", "uncertain"},
+    "secondary_species_confidence": {"confident", "likely", "uncertain"},
+    "tertiary_species_confidence": {"confident", "likely", "uncertain"},
+    "successional_stage": {
+        "early_colonization",
+        "developing_herb_layer",
+        "dense_herb_layer",
+        "shrub_establishment",
+        "young_woodland",
+    },
+    "completion_status": {"partially_reviewed", "reviewed"},
+}
+OBSERVATION_REVIEW_FIELDS = (
+    *OBSERVATION_PERCENT_FIELDS,
+    "dominant_species",
+    "dominant_taxon_rank",
+    "dominant_species_confidence",
+    "dominant_flowering",
+    "dominant_seed_set",
+    "secondary_species",
+    "secondary_taxon_rank",
+    "secondary_species_confidence",
+    "secondary_flowering",
+    "secondary_seed_set",
+    "tertiary_species",
+    "tertiary_taxon_rank",
+    "tertiary_species_confidence",
+    "tertiary_flowering",
+    "tertiary_seed_set",
+    "new_species_detected",
+    "successional_stage",
+    "notes",
+    "completion_status",
+    "completeness_notes",
+)
 
 
 class IngestionError(ValueError):
@@ -589,6 +651,63 @@ class IngestionService:
 
                 CREATE INDEX IF NOT EXISTS review_events_photo_id_idx
                 ON review_events(photo_id, created_at);
+
+                CREATE TABLE IF NOT EXISTS observation_reviews (
+                    batch_id TEXT PRIMARY KEY REFERENCES batches(batch_id) ON DELETE CASCADE,
+                    estimated_total_vegetation_cover_pct INTEGER,
+                    bare_ground_pct INTEGER,
+                    gravel_rock_pct INTEGER,
+                    litter_mulch_woodchip_pct INTEGER,
+                    standing_dead_pct INTEGER,
+                    dominant_species TEXT NOT NULL DEFAULT '',
+                    dominant_taxon_rank TEXT NOT NULL DEFAULT '',
+                    dominant_species_confidence TEXT NOT NULL DEFAULT '',
+                    dominant_flowering TEXT NOT NULL DEFAULT '',
+                    dominant_seed_set TEXT NOT NULL DEFAULT '',
+                    secondary_species TEXT NOT NULL DEFAULT '',
+                    secondary_taxon_rank TEXT NOT NULL DEFAULT '',
+                    secondary_species_confidence TEXT NOT NULL DEFAULT '',
+                    secondary_flowering TEXT NOT NULL DEFAULT '',
+                    secondary_seed_set TEXT NOT NULL DEFAULT '',
+                    tertiary_species TEXT NOT NULL DEFAULT '',
+                    tertiary_taxon_rank TEXT NOT NULL DEFAULT '',
+                    tertiary_species_confidence TEXT NOT NULL DEFAULT '',
+                    tertiary_flowering TEXT NOT NULL DEFAULT '',
+                    tertiary_seed_set TEXT NOT NULL DEFAULT '',
+                    new_species_detected TEXT NOT NULL DEFAULT '',
+                    successional_stage TEXT NOT NULL DEFAULT '',
+                    notes TEXT NOT NULL DEFAULT '',
+                    completion_status TEXT NOT NULL DEFAULT 'partially_reviewed',
+                    completeness_notes TEXT NOT NULL DEFAULT '',
+                    is_final INTEGER NOT NULL DEFAULT 0,
+                    reviewed_by TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS observation_review_events (
+                    review_event_id TEXT PRIMARY KEY,
+                    batch_id TEXT NOT NULL REFERENCES batches(batch_id) ON DELETE CASCADE,
+                    actor_type TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    actor_version TEXT,
+                    action TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS observation_review_events_batch_id_idx
+                ON observation_review_events(batch_id, created_at);
+                """
+            )
+            connection.execute(
+                """
+                UPDATE batches
+                SET status = 'observation_review'
+                WHERE status = 'ready'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM observation_reviews review
+                      WHERE review.batch_id = batches.batch_id AND review.is_final = 1
+                  )
                 """
             )
 
@@ -1003,6 +1122,7 @@ class IngestionService:
         return {
             "counts": {
                 "needs_review": status_counts.get("needs_review", 0),
+                "observation_review": status_counts.get("observation_review", 0),
                 "ready": status_counts.get("ready", 0),
                 "published": status_counts.get("published", 0),
                 "failed": status_counts.get("failed", 0),
@@ -1138,6 +1258,16 @@ class IngestionService:
                 """,
                 (batch_id,),
             ).fetchall()
+            observation_review = connection.execute(
+                "SELECT * FROM observation_reviews WHERE batch_id = ?", (batch_id,)
+            ).fetchone()
+            observation_review_events = connection.execute(
+                """
+                SELECT * FROM observation_review_events
+                WHERE batch_id = ? ORDER BY created_at, review_event_id
+                """,
+                (batch_id,),
+            ).fetchall()
         result = dict(batch)
         events_by_photo: dict[str, list[dict[str, object]]] = {}
         for event in review_events:
@@ -1154,6 +1284,41 @@ class IngestionService:
             if integrity is not None
             else None
         )
+        result["observation_review"] = (
+            dict(observation_review) if observation_review is not None else None
+        )
+        if result["observation_review"] is None and result["status"] == "published":
+            _, observation_rows = read_csv(self.paths.public_dir / "observations.csv")
+            published_observation = next(
+                (
+                    row
+                    for row in observation_rows
+                    if row.get("observation_id")
+                    == observation_id(str(result["site_id"]), str(result["observation_date"]))
+                ),
+                None,
+            )
+            if published_observation is not None:
+                completion_status = published_observation.get("review_status", "")
+                if completion_status not in {"partially_reviewed", "reviewed"}:
+                    completion_status = "partially_reviewed"
+                legacy_review = {
+                    field: published_observation.get(field, "")
+                    for field in OBSERVATION_REVIEW_FIELDS
+                }
+                legacy_review.update(
+                    {
+                        "completion_status": completion_status,
+                        "completeness_notes": "",
+                        "is_final": 1,
+                        "reviewed_by": "legacy_publication",
+                        "updated_at": result.get("published_at", ""),
+                    }
+                )
+                result["observation_review"] = legacy_review
+        result["observation_review_events"] = [
+            dict(event) for event in observation_review_events
+        ]
         return result
 
     def preview_path(self, photo_id: str) -> Path:
@@ -1216,6 +1381,161 @@ class IngestionService:
             )
             self._refresh_batch_status(connection, row["batch_id"])
         return self.get_batch(row["batch_id"])
+
+    @staticmethod
+    def _normalize_observation_review(values: dict[str, object]) -> dict[str, object]:
+        normalized: dict[str, object] = {}
+        for field in OBSERVATION_PERCENT_FIELDS:
+            value = values.get(field)
+            if value is None or str(value).strip() == "":
+                normalized[field] = None
+                continue
+            try:
+                integer = int(str(value))
+            except ValueError as error:
+                raise IngestionError(f"{field} must be a whole number from 0 to 100.") from error
+            if not 0 <= integer <= 100:
+                raise IngestionError(f"{field} must be between 0 and 100.")
+            normalized[field] = integer
+
+        for field in OBSERVATION_BOOLEAN_FIELDS:
+            value = values.get(field)
+            if value is None or str(value).strip() == "":
+                normalized[field] = ""
+                continue
+            if isinstance(value, bool):
+                normalized[field] = "true" if value else "false"
+                continue
+            boolean = str(value).strip().casefold()
+            if boolean not in {"true", "false"}:
+                raise IngestionError(f"{field} must be true, false, or blank.")
+            normalized[field] = boolean
+
+        for field in OBSERVATION_TEXT_FIELDS:
+            normalized[field] = str(values.get(field) or "").strip()
+
+        for field, allowed in OBSERVATION_CATEGORY_FIELDS.items():
+            value = str(values.get(field) or "").strip()
+            if value and value not in allowed:
+                raise IngestionError(f"{field} contains an unsupported value.")
+            normalized[field] = value
+
+        if not normalized["completion_status"]:
+            normalized["completion_status"] = "partially_reviewed"
+        for prefix in ("dominant", "secondary", "tertiary"):
+            if not normalized[f"{prefix}_species"]:
+                for suffix in (
+                    "taxon_rank",
+                    "species_confidence",
+                    "flowering",
+                    "seed_set",
+                ):
+                    normalized[f"{prefix}_{suffix}"] = ""
+        return normalized
+
+    def save_observation_review(
+        self,
+        batch_id: str,
+        values: dict[str, object],
+        *,
+        finalize: bool = False,
+        actor_type: str = "human",
+        actor_id: str = "project_owner",
+        actor_version: str | None = None,
+    ) -> dict[str, object]:
+        if actor_type not in REVIEW_ACTOR_TYPES or not actor_id.strip():
+            raise IngestionError("Review actor metadata is invalid.")
+        normalized = self._normalize_observation_review(values)
+        if finalize:
+            substantive_fields = (
+                *OBSERVATION_PERCENT_FIELDS,
+                "dominant_species",
+                "secondary_species",
+                "tertiary_species",
+                "successional_stage",
+                "notes",
+            )
+            if not any(normalized[field] not in {None, ""} for field in substantive_fields):
+                raise IngestionError(
+                    "Enter at least one observation or note before completing review."
+                )
+            if (
+                normalized["completion_status"] == "partially_reviewed"
+                and not normalized["completeness_notes"]
+            ):
+                raise IngestionError(
+                    "Describe what remains unavailable before completing a partial review."
+                )
+
+        with self._connection() as connection:
+            batch = connection.execute(
+                "SELECT status FROM batches WHERE batch_id = ?", (batch_id,)
+            ).fetchone()
+            if batch is None:
+                raise IngestionError(f"Unknown batch '{batch_id}'.")
+            unresolved = connection.execute(
+                """
+                SELECT COUNT(*) AS count FROM photos
+                WHERE batch_id = ? AND review_status != 'verified'
+                """,
+                (batch_id,),
+            ).fetchone()["count"]
+            if unresolved:
+                raise IngestionError("Finish photo-role review before reviewing the observation.")
+            existing = connection.execute(
+                "SELECT is_final FROM observation_reviews WHERE batch_id = ?", (batch_id,)
+            ).fetchone()
+            columns = ", ".join(OBSERVATION_REVIEW_FIELDS)
+            placeholders = ", ".join("?" for _ in OBSERVATION_REVIEW_FIELDS)
+            updates = ", ".join(
+                f"{field} = excluded.{field}" for field in OBSERVATION_REVIEW_FIELDS
+            )
+            connection.execute(
+                f"""
+                INSERT INTO observation_reviews (
+                    batch_id, {columns}, is_final, reviewed_by, updated_at
+                ) VALUES (?, {placeholders}, ?, ?, ?)
+                ON CONFLICT(batch_id) DO UPDATE SET
+                    {updates},
+                    is_final = excluded.is_final,
+                    reviewed_by = excluded.reviewed_by,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    batch_id,
+                    *(normalized[field] for field in OBSERVATION_REVIEW_FIELDS),
+                    int(finalize),
+                    actor_id.strip(),
+                    utc_now(),
+                ),
+            )
+            if finalize:
+                action = "corrected" if existing and existing["is_final"] else "finalized"
+            else:
+                action = "draft_saved"
+            connection.execute(
+                """
+                INSERT INTO observation_review_events (
+                    review_event_id, batch_id, actor_type, actor_id,
+                    actor_version, action, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"observation_review_{uuid.uuid4().hex}",
+                    batch_id,
+                    actor_type,
+                    actor_id.strip(),
+                    actor_version,
+                    action,
+                    json.dumps(normalized, sort_keys=True, separators=(",", ":")),
+                    datetime.now(timezone.utc).isoformat(timespec="microseconds"),
+                ),
+            )
+            connection.execute(
+                "UPDATE batches SET status = ? WHERE batch_id = ?",
+                ("ready" if finalize else "observation_review", batch_id),
+            )
+        return self.get_batch(batch_id)
 
     def backfill_review_events(
         self, verified_actor_type: str, verified_actor_id: str
@@ -1334,7 +1654,15 @@ class IngestionService:
             """,
             (batch_id,),
         ).fetchone()
-        status = "ready" if counts["total"] and counts["total"] == counts["reviewed"] else "needs_review"
+        observation_review = connection.execute(
+            "SELECT is_final FROM observation_reviews WHERE batch_id = ?", (batch_id,)
+        ).fetchone()
+        if not counts["total"] or counts["total"] != counts["reviewed"]:
+            status = "needs_review"
+        elif observation_review is not None and observation_review["is_final"]:
+            status = "ready"
+        else:
+            status = "observation_review"
         connection.execute(
             "UPDATE batches SET status = ? WHERE batch_id = ? AND status != 'published'",
             (status, batch_id),
@@ -1346,7 +1674,9 @@ class IngestionService:
             if batch["status"] == "published":
                 return batch
             if batch["status"] != "ready":
-                raise IngestionError("Every photo must have a verified role before publication.")
+                raise IngestionError(
+                    "Photo roles and the observation review must be complete before publication."
+                )
 
             copied_paths: list[Path] = []
             try:
@@ -1367,9 +1697,7 @@ class IngestionService:
                 new_manifest_rows: list[dict[str, object]] = []
                 for photo in batch["photos"]:
                     if photo["photo_id"] in known_photo_ids:
-                        raise IngestionError(
-                            f"Photo '{photo['photo_id']}' already exists in the public manifest."
-                        )
+                        continue
                     extension = Path(str(photo["stored_filename"])).suffix.casefold()
                     archive_name = f"{photo['photo_id']}{extension}"
                     relative_path = (
@@ -1423,6 +1751,7 @@ class IngestionService:
                     observed_on,
                     str(batch["observation_notes"]),
                     sum(1 for row in manifest_rows if row["observation_id"] == obs_id),
+                    batch["observation_review"],
                 )
                 summary_rows = self._rebuild_summary(manifest_rows, summary_rows)
 
@@ -1486,25 +1815,36 @@ class IngestionService:
         observed_on: str,
         notes: str,
         photo_count: int,
+        observation_review: object,
     ) -> None:
         existing = next((row for row in rows if row["observation_id"] == obs_id), None)
-        if existing is not None:
-            existing["source_photo_count"] = str(photo_count)
-            return
-        row = {field: "" for field in fields}
+        row = existing if existing is not None else {field: "" for field in fields}
+        review = observation_review if isinstance(observation_review, dict) else {}
         row.update(
             {
                 "observation_id": obs_id,
                 "site_id": site_id,
                 "observation_date": observed_on,
                 "record_origin": "ingestion_app",
-                "review_status": "partially_reviewed",
+                "review_status": str(review.get("completion_status") or "partially_reviewed"),
                 "source_photo_count": str(photo_count),
-                "notes": notes.strip()
-                or "Observation ingested through the upload service; ecological fields pending review.",
             }
         )
-        rows.append(row)
+        for field in OBSERVATION_REVIEW_FIELDS:
+            if field in {"completion_status", "completeness_notes"} or field not in row:
+                continue
+            value = review.get(field)
+            row[field] = "" if value is None else str(value)
+        review_notes = str(review.get("notes") or "").strip()
+        completeness_notes = str(review.get("completeness_notes") or "").strip()
+        note_parts = [part for part in (review_notes, notes.strip()) if part]
+        if completeness_notes:
+            note_parts.append(f"Data completeness: {completeness_notes}")
+        row["notes"] = " ".join(dict.fromkeys(note_parts)) or (
+            "Observation reviewed through the ingestion service."
+        )
+        if existing is None:
+            rows.append(row)
         rows.sort(key=lambda item: (int(item["site_id"]), item["observation_date"]))
 
     @staticmethod
