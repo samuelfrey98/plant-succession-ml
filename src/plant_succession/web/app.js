@@ -8,6 +8,8 @@ const state = {
   integrityRequiresOverride: false,
   preparationId: 0,
   reviewView: "photos",
+  machineReviewConfig: null,
+  machineReviewLoading: false,
 };
 
 const photoTypes = [
@@ -82,6 +84,10 @@ async function loadDashboard() {
   document.querySelector("#metric-ready").textContent = counts.ready;
   document.querySelector("#metric-published").textContent = counts.published;
   renderBatches();
+}
+
+async function loadMachineReviewConfig() {
+  state.machineReviewConfig = await api("/api/machine-review/config");
 }
 
 function filteredBatches() {
@@ -177,6 +183,60 @@ function setObservationField(form, name, value) {
   if (field) field.value = value ?? "";
 }
 
+function fieldLabel(name) {
+  return String(name || "")
+    .replaceAll("_pct", " %")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function applyMachineDraft(result) {
+  const values = result?.draft?.values || {};
+  const form = document.querySelector("#observation-review-form");
+  form.querySelectorAll(".machine-suggested").forEach((field) => field.classList.remove("machine-suggested"));
+  Object.entries(values).forEach(([name, value]) => {
+    if (value === null || value === undefined || name === "completion_status") return;
+    const field = form.elements.namedItem(name);
+    if (!field) return;
+    field.value = typeof value === "boolean" ? String(value) : value;
+    field.classList.add("machine-suggested");
+  });
+}
+
+function renderMachineReview() {
+  const batch = state.selectedBatch;
+  const config = state.machineReviewConfig || {};
+  const button = document.querySelector("#machine-review-button");
+  const configState = document.querySelector("#machine-config-state");
+  const photoReviewComplete = batch.photos.every((photo) => photo.review_status === "verified");
+  const available = Boolean(config.available);
+  button.disabled = !available || !photoReviewComplete || state.machineReviewLoading;
+  button.innerHTML = state.machineReviewLoading
+    ? '<i data-lucide="loader-circle" aria-hidden="true"></i> Reviewing photos...'
+    : '<i data-lucide="scan-search" aria-hidden="true"></i> Generate machine draft';
+  if (!available) {
+    configState.textContent = config.reason || "Machine review is not configured.";
+  } else if (!photoReviewComplete) {
+    configState.textContent = "Verify every photo role before requesting a draft.";
+  } else {
+    configState.textContent = `${config.provider} | ${config.model}`;
+  }
+
+  const result = batch.latest_machine_review;
+  const panel = document.querySelector("#machine-result");
+  panel.classList.toggle("hidden", !result);
+  if (!result) return;
+  document.querySelector("#machine-summary").textContent = result.draft?.overall_summary || "No summary returned.";
+  const priorities = result.draft?.review_priority_fields || [];
+  document.querySelector("#machine-priority").textContent = priorities.length
+    ? `Check carefully: ${priorities.map(fieldLabel).join(", ")}.`
+    : "No fields were specially flagged, but human review is still required.";
+  const assessments = result.draft?.assessments || [];
+  document.querySelector("#machine-assessments").innerHTML = assessments.length
+    ? assessments.map((item) => `<li><strong>${escapeHtml(fieldLabel(item.field_name))}</strong> <span>${escapeHtml(item.confidence)}</span><p>${escapeHtml(item.evidence)}</p></li>`).join("")
+    : "<li>No field-level assessments were returned.</li>";
+}
+
 function renderObservationReview() {
   const batch = state.selectedBatch;
   const form = document.querySelector("#observation-review-form");
@@ -207,9 +267,34 @@ function renderObservationReview() {
     stageNote.className = "observation-stage-note";
   }
   const events = batch.observation_review_events || [];
-  document.querySelector("#observation-save-state").textContent = events.length
-    ? `${events.length} saved review ${events.length === 1 ? "version" : "versions"}`
+  const humanEvents = events.filter((event) => ["draft_saved", "finalized", "corrected"].includes(event.action));
+  document.querySelector("#observation-save-state").textContent = humanEvents.length
+    ? `${humanEvents.length} saved human review ${humanEvents.length === 1 ? "version" : "versions"}`
     : (published ? "Legacy publication; no local review history" : "Not saved yet");
+  renderMachineReview();
+}
+
+async function generateMachineReview() {
+  if (!state.selectedBatch || state.machineReviewLoading) return;
+  state.machineReviewLoading = true;
+  renderMachineReview();
+  iconRefresh();
+  try {
+    const result = await api(
+      `/api/batches/${encodeURIComponent(state.selectedBatch.batch_id)}/machine-review`,
+      {method: "POST"},
+    );
+    state.selectedBatch.latest_machine_review = result;
+    applyMachineDraft(result);
+    renderMachineReview();
+    showToast("Machine draft applied. Review and edit it before saving.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    state.machineReviewLoading = false;
+    renderMachineReview();
+    iconRefresh();
+  }
 }
 
 function photoCard(photo) {
@@ -565,6 +650,7 @@ async function initialize() {
   document.querySelector("#integrity-override-confirmed").addEventListener("change", updateStageButton);
   document.querySelector("#accept-button").addEventListener("click", acceptSuggestions);
   document.querySelector("#publish-button").addEventListener("click", publishBatch);
+  document.querySelector("#machine-review-button").addEventListener("click", generateMachineReview);
   document.querySelector("#observation-review-form").addEventListener("submit", saveObservationReview);
   document.querySelectorAll(".review-tab").forEach((button) => button.addEventListener("click", () => {
     state.reviewView = button.dataset.reviewView;
@@ -578,7 +664,7 @@ async function initialize() {
   setupFilePicker();
   iconRefresh();
   try {
-    await loadSites();
+    await Promise.all([loadSites(), loadMachineReviewConfig()]);
     await loadDashboard();
   } catch (error) {
     document.querySelector("#service-state").classList.add("offline");

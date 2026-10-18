@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from plant_succession.ingestion import IngestionError, IngestionPaths, IngestionService
+from plant_succession.machine_review import OpenAIMachineReviewer
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -71,7 +72,8 @@ def build_service() -> IngestionService:
             state_dir=state_dir,
             archive_dir=archive_dir,
             site_anchor_file=site_anchor_file,
-        )
+        ),
+        machine_reviewer=OpenAIMachineReviewer(),
     )
 
 
@@ -157,6 +159,11 @@ def sites() -> list[dict[str, str]]:
 @app.get("/api/dashboard")
 def dashboard() -> dict[str, object]:
     return service.dashboard()
+
+
+@app.get("/api/machine-review/config")
+def machine_review_configuration() -> dict[str, object]:
+    return service.machine_review_configuration()
 
 
 @app.get("/api/batches/{batch_id}")
@@ -264,6 +271,14 @@ def save_observation_review(
             actor_type="human",
             actor_id=REVIEWER_ID,
         )
+    except IngestionError as error:
+        raise bad_request(error) from error
+
+
+@app.post("/api/batches/{batch_id}/machine-review")
+def generate_machine_observation_review(batch_id: str) -> dict[str, object]:
+    try:
+        return service.generate_machine_observation_review(batch_id)
     except IngestionError as error:
         raise bad_request(error) from error
 

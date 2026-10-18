@@ -40,6 +40,9 @@ conservative candidate labeling
 human review queue
       |
       v
+optional model-assisted observation draft
+      |
+      v
 batch-level observation review
       |
       v
@@ -181,6 +184,36 @@ schema only during validated publication.
 Published batches remain reviewable. Saving a new observation version reopens only the metadata stage;
 republishing updates the existing observation row while retaining the original photo IDs and archive files.
 
+### Optional Machine Draft
+
+The Observation tab can request a first-pass draft from a general-purpose vision model after every photo
+role has been verified. This is optional and deliberately human-gated: opening a batch does not transmit
+images. Clicking **Generate machine draft** sends the batch's optimized JPEG previews, verified photo roles,
+site ID, and observation date to the configured provider.
+
+Configure it before starting the service:
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+# Optional; defaults to gpt-6-astra.
+export PLANT_MACHINE_REVIEW_MODEL="gpt-6-astra"
+.venv/bin/python scripts/run_ingestion_app.py
+```
+
+The response is constrained to the observation-review schema and includes per-field confidence, visual
+evidence, and a list of fields that deserve extra attention. Unsupported fields should remain null. The
+prompt prohibits disturbance inference and treats taxonomic labels as uncertain unless the photographs
+show diagnostic evidence.
+
+A generated draft is stored as an append-only `model` / `suggested` event. It fills the browser form for
+editing but does not write the canonical observation-review row. Only a later human **Save draft** or
+**Complete review** action creates the canonical values used during publication. Re-running the model adds
+another suggestion event instead of erasing earlier model or human judgments.
+
+This feature is not a custom-trained ecological classifier and should not be described as ground truth.
+API use may incur provider charges. Keep `OPENAI_API_KEY` in the environment; `.env` and common credential
+files are ignored by Git.
+
 ## Publication Guarantees
 
 A batch cannot publish while any photo is unresolved or its observation review is incomplete. Publication then:
@@ -204,13 +237,15 @@ FastAPI publishes interactive API documentation at `http://127.0.0.1:8765/docs`.
 - `GET /api/batches/{batch_id}`: retrieve candidates and review state
 - `PATCH /api/photos/{photo_id}`: submit a human-verified role
 - `POST /api/batches/{batch_id}/accept-suggestions`: accept explicit filename suggestions
+- `GET /api/machine-review/config`: report whether optional model review is configured
+- `POST /api/batches/{batch_id}/machine-review`: generate and audit a model suggestion
 - `PUT /api/batches/{batch_id}/observation-review`: save or complete the batch observation review
 - `POST /api/batches/{batch_id}/publish`: validate and publish a ready batch
 - `GET /api/dashboard`: retrieve queue and pipeline metrics
 
 ## Current Boundary
 
-This version automates ingestion, metadata normalization, photo-role review, structured observation
-review, and publication. Disturbance events remain a separate evidence-backed workflow. A later version
-can add model-backed suggestions and send only low-confidence predictions to the same review stages
-without changing the publication contract.
+This version automates ingestion, metadata normalization, photo-role review, optional model-assisted
+observation drafts, structured human review, and publication. Disturbance events remain a separate
+evidence-backed workflow. Model output is advisory and cannot cross the publication boundary without a
+human-completed observation review.
