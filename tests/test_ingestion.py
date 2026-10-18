@@ -99,7 +99,7 @@ class IngestionServiceTests(unittest.TestCase):
             photo for photo in batch["photos"] if photo["review_status"] != "verified"
         )
         batch = self.service.review_photo(unresolved["photo_id"], "quadrat")
-        self.assertEqual(batch["status"], "ready")
+        self.assertEqual(batch["status"], "observation_review")
         for photo in batch["photos"]:
             self.assertEqual(photo["review_events"][0]["actor_type"], "rule")
             self.assertIn(photo["review_events"][-1]["actor_type"], {"human"})
@@ -111,6 +111,33 @@ class IngestionServiceTests(unittest.TestCase):
             photo for photo in batch["photos"] if photo["source_filename"] == "IMG_4021.jpg"
         )
         self.assertEqual(manually_reviewed["review_events"][-1]["action"], "verified")
+
+        with self.assertRaisesRegex(IngestionError, "observation review"):
+            self.service.publish_batch(batch["batch_id"])
+        review_values = {
+            "estimated_total_vegetation_cover_pct": 65,
+            "bare_ground_pct": 25,
+            "gravel_rock_pct": 10,
+            "dominant_species": "Artemisia sp.",
+            "dominant_taxon_rank": "genus",
+            "dominant_species_confidence": "likely",
+            "dominant_flowering": "false",
+            "new_species_detected": "false",
+            "successional_stage": "developing_herb_layer",
+            "notes": "Reviewed from the staged photo set.",
+            "completion_status": "reviewed",
+        }
+        batch = self.service.save_observation_review(
+            batch["batch_id"], review_values, finalize=False
+        )
+        self.assertEqual(batch["status"], "observation_review")
+        self.assertEqual(batch["observation_review_events"][-1]["action"], "draft_saved")
+        batch = self.service.save_observation_review(
+            batch["batch_id"], review_values, finalize=True
+        )
+        self.assertEqual(batch["status"], "ready")
+        self.assertEqual(batch["observation_review"]["reviewed_by"], "project_owner")
+        self.assertEqual(batch["observation_review_events"][-1]["action"], "finalized")
 
         batch = self.service.publish_batch(batch["batch_id"])
         self.assertEqual(batch["status"], "published")
@@ -125,9 +152,38 @@ class IngestionServiceTests(unittest.TestCase):
         )
         self.assertEqual(observation["source_photo_count"], "2")
         self.assertEqual(observation["record_origin"], "ingestion_app")
+        self.assertEqual(observation["review_status"], "reviewed")
+        self.assertEqual(observation["estimated_total_vegetation_cover_pct"], "65")
+        self.assertEqual(observation["dominant_species"], "Artemisia sp.")
         self.assertEqual(
             validate_public_photo_data(self.public_dir, ROOT / "data" / "schema"), []
         )
+
+        review_values["estimated_total_vegetation_cover_pct"] = 70
+        review_values["notes"] = "Corrected after a second review."
+        batch = self.service.save_observation_review(
+            batch["batch_id"], review_values, finalize=True, actor_id="reviewer_two"
+        )
+        self.assertEqual(batch["status"], "ready")
+        batch = self.service.publish_batch(batch["batch_id"])
+        self.assertEqual(batch["status"], "published")
+        self.assertEqual(
+            len(
+                [
+                    row
+                    for row in csv_rows(self.public_dir / "photo_manifest.csv")
+                    if row["observation_date"] == "2026-10-15"
+                ]
+            ),
+            2,
+        )
+        corrected = next(
+            row
+            for row in csv_rows(self.public_dir / "observations.csv")
+            if row["observation_id"] == "site_01_2026_10_15"
+        )
+        self.assertEqual(corrected["estimated_total_vegetation_cover_pct"], "70")
+        self.assertIn("Corrected after a second review.", corrected["notes"])
 
     def test_publish_rejects_unresolved_photo_without_mutating_public_data(self):
         before = (self.public_dir / "photo_manifest.csv").read_bytes()
@@ -137,9 +193,45 @@ class IngestionServiceTests(unittest.TestCase):
             "",
             [("IMG_5001.jpg", image_bytes((30, 30, 30)))],
         )
-        with self.assertRaisesRegex(IngestionError, "verified role"):
+        with self.assertRaisesRegex(IngestionError, "Photo roles"):
             self.service.publish_batch(batch["batch_id"])
         self.assertEqual(before, (self.public_dir / "photo_manifest.csv").read_bytes())
+
+    def test_observation_review_validates_ranges_and_partial_completion(self):
+        batch = self.service.create_batch(
+            "4",
+            "2026-10-15",
+            "",
+            [("wide.jpg", image_bytes((50, 90, 50)))],
+        )
+        batch = self.service.accept_explicit_suggestions(batch["batch_id"])
+        self.assertEqual(batch["status"], "observation_review")
+
+        with self.assertRaisesRegex(IngestionError, "between 0 and 100"):
+            self.service.save_observation_review(
+                batch["batch_id"],
+                {"estimated_total_vegetation_cover_pct": 101},
+                finalize=False,
+            )
+        with self.assertRaisesRegex(IngestionError, "what remains unavailable"):
+            self.service.save_observation_review(
+                batch["batch_id"],
+                {"notes": "Some visible vegetation.", "completion_status": "partially_reviewed"},
+                finalize=True,
+            )
+
+        batch = self.service.save_observation_review(
+            batch["batch_id"],
+            {
+                "notes": "Some visible vegetation.",
+                "completion_status": "partially_reviewed",
+                "completeness_notes": "Cover could not be estimated from this framing.",
+            },
+            finalize=True,
+            actor_id="reviewer_two",
+        )
+        self.assertEqual(batch["status"], "ready")
+        self.assertEqual(batch["observation_review"]["reviewed_by"], "reviewer_two")
 
     def test_duplicate_upload_is_counted_and_not_staged_twice(self):
         first = image_bytes((10, 20, 30)).getvalue()

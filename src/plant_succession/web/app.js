@@ -7,6 +7,7 @@ const state = {
   uploadSuggestion: null,
   integrityRequiresOverride: false,
   preparationId: 0,
+  reviewView: "photos",
 };
 
 const photoTypes = [
@@ -57,6 +58,7 @@ function siteLabel(siteId) {
 function statusLabel(status) {
   return {
     needs_review: "Needs review",
+    observation_review: "Observation review",
     ready: "Ready to publish",
     published: "Published",
     failed: "Failed",
@@ -76,7 +78,7 @@ async function loadDashboard() {
   state.dashboard = await api("/api/dashboard");
   const counts = state.dashboard.counts;
   document.querySelector("#metric-review").textContent = counts.needs_review;
-  document.querySelector("#metric-photos").textContent = counts.unresolved_photos;
+  document.querySelector("#metric-observations").textContent = counts.observation_review;
   document.querySelector("#metric-ready").textContent = counts.ready;
   document.querySelector("#metric-published").textContent = counts.published;
   renderBatches();
@@ -122,6 +124,9 @@ function renderBatches() {
 async function selectBatch(batchId) {
   try {
     state.selectedBatch = await api(`/api/batches/${encodeURIComponent(batchId)}`);
+    state.reviewView = ["observation_review", "ready", "published"].includes(state.selectedBatch.status)
+      ? "observation"
+      : "photos";
     renderBatches();
     renderReview();
     document.querySelector("#review-workspace").scrollIntoView({behavior: "smooth", block: "start"});
@@ -151,7 +156,60 @@ function renderReview() {
   document.querySelectorAll(".save-photo").forEach((button) => {
     button.addEventListener("click", () => savePhoto(button.dataset.photoId));
   });
+  renderObservationReview();
+  renderReviewView();
   iconRefresh();
+}
+
+function renderReviewView() {
+  const photosActive = state.reviewView === "photos";
+  document.querySelector("#photos-tab").classList.toggle("active", photosActive);
+  document.querySelector("#photos-tab").setAttribute("aria-selected", String(photosActive));
+  document.querySelector("#observation-tab").classList.toggle("active", !photosActive);
+  document.querySelector("#observation-tab").setAttribute("aria-selected", String(!photosActive));
+  document.querySelector("#photo-review-panel").classList.toggle("hidden", !photosActive);
+  document.querySelector("#observation-review-panel").classList.toggle("hidden", photosActive);
+  document.querySelector("#accept-button").classList.toggle("hidden", !photosActive);
+}
+
+function setObservationField(form, name, value) {
+  const field = form.elements.namedItem(name);
+  if (field) field.value = value ?? "";
+}
+
+function renderObservationReview() {
+  const batch = state.selectedBatch;
+  const form = document.querySelector("#observation-review-form");
+  const review = batch.observation_review || {};
+  [...form.elements].forEach((field) => {
+    if (field.name) setObservationField(form, field.name, review[field.name]);
+  });
+  if (!review.notes && batch.observation_notes) {
+    setObservationField(form, "notes", batch.observation_notes);
+  }
+  const photoReviewComplete = batch.photos.every((photo) => photo.review_status === "verified");
+  const published = batch.status === "published";
+  [...form.elements].forEach((field) => {
+    field.disabled = !photoReviewComplete;
+  });
+  const stageNote = document.querySelector("#observation-stage-note");
+  if (!photoReviewComplete) {
+    stageNote.textContent = "Finish classifying every photo before reviewing this observation.";
+    stageNote.className = "observation-stage-note warning";
+  } else if (published) {
+    stageNote.textContent = "This observation is published. Saving a new review opens a metadata revision without duplicating its photos.";
+    stageNote.className = "observation-stage-note complete";
+  } else if (review.is_final) {
+    stageNote.textContent = "Observation review complete. This batch is ready to publish.";
+    stageNote.className = "observation-stage-note complete";
+  } else {
+    stageNote.textContent = "Record only what the photos or field notes support. Blank values remain null.";
+    stageNote.className = "observation-stage-note";
+  }
+  const events = batch.observation_review_events || [];
+  document.querySelector("#observation-save-state").textContent = events.length
+    ? `${events.length} saved review ${events.length === 1 ? "version" : "versions"}`
+    : (published ? "Legacy publication; no local review history" : "Not saved yet");
 }
 
 function photoCard(photo) {
@@ -201,11 +259,60 @@ async function savePhoto(photoId) {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({photo_type: type, notes}),
     });
+    if (state.selectedBatch.status === "observation_review") {
+      state.reviewView = "observation";
+    }
     await loadDashboard();
     renderReview();
     showToast("Photo role verified.");
   } catch (error) {
     showToast(error.message, true);
+  }
+}
+
+function observationPayload(form, finalize) {
+  const payload = {};
+  const numberFields = new Set([
+    "estimated_total_vegetation_cover_pct",
+    "bare_ground_pct",
+    "gravel_rock_pct",
+    "litter_mulch_woodchip_pct",
+    "standing_dead_pct",
+  ]);
+  for (const [name, value] of new FormData(form).entries()) {
+    const normalized = String(value).trim();
+    payload[name] = numberFields.has(name)
+      ? (normalized === "" ? null : Number(normalized))
+      : normalized;
+  }
+  payload.finalize = finalize;
+  return payload;
+}
+
+async function saveObservationReview(event) {
+  event.preventDefault();
+  const button = event.submitter;
+  const finalize = button?.dataset.observationAction === "complete";
+  const form = event.currentTarget;
+  const buttons = form.querySelectorAll("button");
+  buttons.forEach((item) => { item.disabled = true; });
+  try {
+    state.selectedBatch = await api(
+      `/api/batches/${encodeURIComponent(state.selectedBatch.batch_id)}/observation-review`,
+      {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(observationPayload(form, finalize)),
+      },
+    );
+    state.reviewView = "observation";
+    await loadDashboard();
+    renderReview();
+    showToast(finalize ? "Observation review complete." : "Observation draft saved.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    if (state.selectedBatch) renderObservationReview();
   }
 }
 
@@ -233,6 +340,7 @@ async function uploadBatch(event) {
     form.delete("files");
     form.append("upload_token", state.uploadToken);
     state.selectedBatch = await api("/api/batches/from-suggestion", {method: "POST", body: form});
+    state.reviewView = "photos";
     state.uploadToken = null;
     state.uploadSuggestion = null;
     state.integrityRequiresOverride = false;
@@ -457,6 +565,11 @@ async function initialize() {
   document.querySelector("#integrity-override-confirmed").addEventListener("change", updateStageButton);
   document.querySelector("#accept-button").addEventListener("click", acceptSuggestions);
   document.querySelector("#publish-button").addEventListener("click", publishBatch);
+  document.querySelector("#observation-review-form").addEventListener("submit", saveObservationReview);
+  document.querySelectorAll(".review-tab").forEach((button) => button.addEventListener("click", () => {
+    state.reviewView = button.dataset.reviewView;
+    renderReviewView();
+  }));
   document.querySelectorAll(".segment").forEach((button) => button.addEventListener("click", () => {
     state.filter = button.dataset.filter;
     document.querySelectorAll(".segment").forEach((segment) => segment.classList.toggle("active", segment === button));

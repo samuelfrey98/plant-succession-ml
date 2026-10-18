@@ -106,6 +106,35 @@ class ReviewUpdate(BaseModel):
     notes: str = ""
 
 
+class ObservationReviewUpdate(BaseModel):
+    estimated_total_vegetation_cover_pct: int | None = None
+    bare_ground_pct: int | None = None
+    gravel_rock_pct: int | None = None
+    litter_mulch_woodchip_pct: int | None = None
+    standing_dead_pct: int | None = None
+    dominant_species: str = ""
+    dominant_taxon_rank: str = ""
+    dominant_species_confidence: str = ""
+    dominant_flowering: str = ""
+    dominant_seed_set: str = ""
+    secondary_species: str = ""
+    secondary_taxon_rank: str = ""
+    secondary_species_confidence: str = ""
+    secondary_flowering: str = ""
+    secondary_seed_set: str = ""
+    tertiary_species: str = ""
+    tertiary_taxon_rank: str = ""
+    tertiary_species_confidence: str = ""
+    tertiary_flowering: str = ""
+    tertiary_seed_set: str = ""
+    new_species_detected: str = ""
+    successional_stage: str = ""
+    notes: str = ""
+    completion_status: str = "partially_reviewed"
+    completeness_notes: str = ""
+    finalize: bool = False
+
+
 def bad_request(error: IngestionError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(error))
 
@@ -214,6 +243,24 @@ def accept_suggestions(batch_id: str) -> dict[str, object]:
     try:
         return service.accept_explicit_suggestions(
             batch_id,
+            actor_type="human",
+            actor_id=REVIEWER_ID,
+        )
+    except IngestionError as error:
+        raise bad_request(error) from error
+
+
+@app.put("/api/batches/{batch_id}/observation-review")
+def save_observation_review(
+    batch_id: str, update: ObservationReviewUpdate
+) -> dict[str, object]:
+    try:
+        values = update.model_dump()
+        finalize = bool(values.pop("finalize"))
+        return service.save_observation_review(
+            batch_id,
+            values,
+            finalize=finalize,
             actor_type="human",
             actor_id=REVIEWER_ID,
         )

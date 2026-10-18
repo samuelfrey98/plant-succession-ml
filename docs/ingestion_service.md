@@ -40,6 +40,9 @@ conservative candidate labeling
 human review queue
       |
       v
+batch-level observation review
+      |
+      v
 temporary public-dataset build
       |
       v
@@ -163,9 +166,24 @@ For legacy local ingestion rows, review events can be backfilled only when the r
   --verified-actor-id project_owner
 ```
 
+## Observation Review
+
+Resolving every photo role moves a batch into `observation_review`; it does not make the batch
+publishable. The Observation tab stores a structured private draft containing surface-cover estimates,
+up to three uncertainty-aware taxon labels, visible flowering and seed-set states, a successional-stage
+assessment, notes, and an explicit partial-or-complete result.
+
+Draft saves and final submissions are separate append-only events with actor identity and a complete
+JSON snapshot. Completing a partial review requires a completeness note, while unsupported values may
+remain blank and publish as null. The final reviewed values are mapped onto the existing observation
+schema only during validated publication.
+
+Published batches remain reviewable. Saving a new observation version reopens only the metadata stage;
+republishing updates the existing observation row while retaining the original photo IDs and archive files.
+
 ## Publication Guarantees
 
-A batch cannot publish while any photo is unresolved. Publication then:
+A batch cannot publish while any photo is unresolved or its observation review is incomplete. Publication then:
 
 1. Copies originals into the private deterministic archive.
 2. Builds candidate versions of `photo_manifest.csv`, `observations.csv`, and
@@ -173,7 +191,8 @@ A batch cannot publish while any photo is unresolved. Publication then:
 3. Runs the complete public-data validator, including relational and privacy checks.
 4. Atomically replaces the three public CSVs only when validation succeeds.
 
-The service is idempotent for an already-published batch and detects repeat files by content hash.
+The service is idempotent for an unchanged published batch, supports observation-metadata revisions without
+duplicating photos, and detects repeat files by content hash.
 
 ## API Surface
 
@@ -185,12 +204,13 @@ FastAPI publishes interactive API documentation at `http://127.0.0.1:8765/docs`.
 - `GET /api/batches/{batch_id}`: retrieve candidates and review state
 - `PATCH /api/photos/{photo_id}`: submit a human-verified role
 - `POST /api/batches/{batch_id}/accept-suggestions`: accept explicit filename suggestions
+- `PUT /api/batches/{batch_id}/observation-review`: save or complete the batch observation review
 - `POST /api/batches/{batch_id}/publish`: validate and publish a ready batch
 - `GET /api/dashboard`: retrieve queue and pipeline metrics
 
 ## Current Boundary
 
-This version automates ingestion, metadata normalization, photo-role review, and publication. Ecological
-cover and taxon review remain in the existing observation workflow. A later version can add a model-backed
-labeler and send only low-confidence predictions to the same review queue without changing the publication
-contract.
+This version automates ingestion, metadata normalization, photo-role review, structured observation
+review, and publication. Disturbance events remain a separate evidence-backed workflow. A later version
+can add model-backed suggestions and send only low-confidence predictions to the same review stages
+without changing the publication contract.
