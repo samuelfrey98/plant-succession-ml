@@ -97,6 +97,19 @@ textarea { resize: vertical; }
 .file-summary { min-height: 34px; padding: 9px 1px; color: var(--muted); font-size: 12px; }
 .metadata-suggestion { margin: 0 0 12px; padding: 10px 11px; border-left: 3px solid var(--green); background: var(--green-soft); color: #294d37; font-size: 12px; line-height: 1.45; }
 .metadata-suggestion.warning { border-left-color: var(--amber); background: var(--amber-soft); color: #704700; }
+.batch-integrity { margin-top: 17px; padding: 12px; border: 1px solid #b9cbc0; border-radius: 5px; background: #f7faf8; }
+.batch-integrity.attention { border-color: #d0a055; background: #fff9ee; }
+.integrity-heading { display: flex; align-items: flex-start; gap: 9px; }
+.integrity-heading > svg { width: 18px; height: 18px; flex: 0 0 auto; color: var(--green); }
+.batch-integrity.attention .integrity-heading > svg { color: var(--amber); }
+.integrity-heading strong { display: block; font-size: 13px; }
+.integrity-heading p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.integrity-issues { display: grid; gap: 6px; margin: 10px 0 0; padding: 0; list-style: none; }
+.integrity-issues li { padding-top: 7px; border-top: 1px solid #e1e7e3; color: #66502d; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.integrity-issues li strong { color: #513b18; }
+.integrity-override { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 0; padding-top: 10px; border-top: 1px solid #dbc89f; color: #5e451c; font-size: 12px; line-height: 1.4; }
+.integrity-override input { margin: 2px 0 0; flex: 0 0 auto; }
+.integrity-override span { color: inherit; font-weight: 650; }
 
 .primary-button, .secondary-button, .icon-button {
   min-height: 40px;
