@@ -45,6 +45,7 @@ TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
 UPLOAD_TOKEN_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 MAX_SITE_MATCH_DISTANCE_METERS = 150.0
 UPLOAD_SUGGESTION_MAX_AGE_SECONDS = 24 * 60 * 60
+REVIEW_ACTOR_TYPES = {"human", "ai_assistant", "model", "rule", "legacy_unknown"}
 
 
 class IngestionError(ValueError):
@@ -372,6 +373,82 @@ def suggest_batch_metadata(
         "warnings": warnings,
         "files": file_results,
     }
+
+
+def assess_batch_integrity(
+    files: list[dict[str, object]], site_id: str, observation_date: str
+) -> dict[str, object]:
+    """Compare every prepared photo with the site and date selected for its batch."""
+
+    checks: list[dict[str, object]] = []
+    issue_count = 0
+    warning_count = 0
+    for index, item in enumerate(files, start=1):
+        filename = str(item.get("source_filename") or item.get("filename") or f"Photo {index}")
+        captured_at = str(item.get("captured_at") or "")
+        capture_date = captured_at[:10] if len(captured_at) >= 10 else None
+        nearest_site_id = str(item.get("nearest_site_id") or "") or None
+        gps_present = bool(item.get("gps_present"))
+        distance = item.get("distance_meters")
+        margin = item.get("runner_up_margin_meters")
+
+        if not gps_present or nearest_site_id is None:
+            site_check = "missing_metadata"
+        elif distance is not None and float(distance) > MAX_SITE_MATCH_DISTANCE_METERS:
+            site_check = "outside_site_range"
+        elif nearest_site_id != str(site_id):
+            site_check = "site_mismatch"
+        elif margin is not None and float(margin) < 15:
+            site_check = "ambiguous_site"
+        else:
+            site_check = "match"
+
+        if capture_date is None:
+            date_check = "missing_metadata"
+        elif capture_date != observation_date:
+            date_check = "date_mismatch"
+        else:
+            date_check = "match"
+
+        blocking = site_check not in {"match", "ambiguous_site"} or date_check != "match"
+        warning = site_check == "ambiguous_site"
+        issue_count += int(blocking)
+        warning_count += int(warning)
+        checks.append(
+            {
+                "file_index": index,
+                "filename": filename,
+                "captured_at": captured_at or None,
+                "capture_date": capture_date,
+                "gps_present": gps_present,
+                "nearest_site_id": nearest_site_id,
+                "distance_meters": distance,
+                "runner_up_margin_meters": margin,
+                "site_check": site_check,
+                "date_check": date_check,
+                "blocking": blocking,
+                "warning": warning,
+            }
+        )
+
+    if issue_count:
+        status = "attention_required"
+    elif warning_count:
+        status = "passed_with_warnings"
+    else:
+        status = "passed"
+    return {
+        "status": status,
+        "site_id": str(site_id),
+        "observation_date": observation_date,
+        "photo_count": len(checks),
+        "issue_count": issue_count,
+        "warning_count": warning_count,
+        "requires_override": issue_count > 0,
+        "files": checks,
+    }
+
+
 def read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -468,8 +545,87 @@ class IngestionService:
 
                 CREATE INDEX IF NOT EXISTS photos_batch_id_idx ON photos(batch_id);
                 CREATE INDEX IF NOT EXISTS batches_status_idx ON batches(status);
+
+                CREATE TABLE IF NOT EXISTS batch_integrity_checks (
+                    batch_id TEXT PRIMARY KEY REFERENCES batches(batch_id) ON DELETE CASCADE,
+                    status TEXT NOT NULL,
+                    site_id TEXT NOT NULL,
+                    observation_date TEXT NOT NULL,
+                    photo_count INTEGER NOT NULL,
+                    issue_count INTEGER NOT NULL,
+                    warning_count INTEGER NOT NULL,
+                    override_confirmed INTEGER NOT NULL DEFAULT 0,
+                    checked_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS batch_integrity_files (
+                    batch_id TEXT NOT NULL REFERENCES batches(batch_id) ON DELETE CASCADE,
+                    file_index INTEGER NOT NULL,
+                    source_filename TEXT NOT NULL,
+                    captured_at TEXT,
+                    nearest_site_id TEXT,
+                    distance_meters REAL,
+                    runner_up_margin_meters REAL,
+                    site_check TEXT NOT NULL,
+                    date_check TEXT NOT NULL,
+                    blocking INTEGER NOT NULL,
+                    warning INTEGER NOT NULL,
+                    PRIMARY KEY (batch_id, file_index)
+                );
+
+                CREATE TABLE IF NOT EXISTS review_events (
+                    review_event_id TEXT PRIMARY KEY,
+                    photo_id TEXT NOT NULL REFERENCES photos(photo_id) ON DELETE CASCADE,
+                    label_field TEXT NOT NULL,
+                    label_value TEXT NOT NULL,
+                    actor_type TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    actor_version TEXT,
+                    action TEXT NOT NULL,
+                    confidence REAL,
+                    notes TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS review_events_photo_id_idx
+                ON review_events(photo_id, created_at);
                 """
             )
+
+    @staticmethod
+    def _record_review_event(
+        connection: sqlite3.Connection,
+        photo_id: str,
+        label_value: str,
+        actor_type: str,
+        actor_id: str,
+        action: str,
+        *,
+        actor_version: str | None = None,
+        confidence: float | None = None,
+        notes: str = "",
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO review_events (
+                review_event_id, photo_id, label_field, label_value,
+                actor_type, actor_id, actor_version, action,
+                confidence, notes, created_at
+            ) VALUES (?, ?, 'photo_type', ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"review_{uuid.uuid4().hex}",
+                photo_id,
+                label_value,
+                actor_type,
+                actor_id,
+                actor_version,
+                action,
+                confidence,
+                notes.strip(),
+                datetime.now(timezone.utc).isoformat(timespec="microseconds"),
+            ),
+        )
 
     def list_sites(self) -> list[dict[str, str]]:
         _, rows = read_csv(self.paths.public_dir / "site_registry.csv")
@@ -558,6 +714,20 @@ class IngestionService:
                 )
             if not records:
                 raise IngestionError("Choose at least one supported photo.")
+
+            result = suggest_batch_metadata(metadata_rows, self._read_site_anchors())
+            for record, item in zip(records, result["files"], strict=True):  # type: ignore[call-overload]
+                record.update(
+                    {
+                        "captured_at": item.get("captured_at"),
+                        "gps_present": item.get("gps_present", False),
+                        "nearest_site_id": item.get("nearest_site_id"),
+                        "distance_meters": item.get("distance_meters"),
+                        "runner_up_margin_meters": item.get(
+                            "runner_up_margin_meters"
+                        ),
+                    }
+                )
             manifest = {
                 "upload_token": upload_token,
                 "created_at": utc_now(),
@@ -572,7 +742,6 @@ class IngestionService:
             shutil.rmtree(suggestion_root, ignore_errors=True)
             raise
 
-        result = suggest_batch_metadata(metadata_rows, self._read_site_anchors())
         result["upload_token"] = upload_token
         result["uploaded_photo_count"] = len(records)
         result["uploaded_bytes"] = sum(int(record["file_size_bytes"]) for record in records)
@@ -584,6 +753,7 @@ class IngestionService:
         site_id: str,
         observation_date: str,
         observation_notes: str,
+        integrity_override_confirmed: bool = False,
     ) -> dict[str, object]:
         if not UPLOAD_TOKEN_PATTERN.fullmatch(upload_token):
             raise IngestionError("The prepared upload token is invalid.")
@@ -606,6 +776,20 @@ class IngestionService:
         if not all(isinstance(record, dict) for record in file_records):
             raise IngestionError("The prepared upload metadata is unreadable.")
 
+        integrity = assess_batch_integrity(file_records, site_id, observation_date)
+        if integrity["requires_override"] and not integrity_override_confirmed:
+            filenames = [
+                str(item["filename"])
+                for item in integrity["files"]  # type: ignore[index]
+                if item["blocking"]
+            ]
+            preview = ", ".join(filenames[:4])
+            suffix = "" if len(filenames) <= 4 else f" and {len(filenames) - 4} more"
+            raise IngestionError(
+                "Batch integrity found site/date exceptions in "
+                f"{preview}{suffix}. Review them and confirm the override before staging."
+            )
+
         with ExitStack() as stack:
             uploads: list[tuple[str, BinaryIO]] = []
             for record in file_records:
@@ -618,8 +802,11 @@ class IngestionService:
                     )
                 uploads.append((source_filename, stack.enter_context(path.open("rb"))))
             batch = self.create_batch(site_id, observation_date, observation_notes, uploads)
+        self._record_batch_integrity(
+            str(batch["batch_id"]), integrity, integrity_override_confirmed
+        )
         shutil.rmtree(suggestion_root, ignore_errors=True)
-        return batch
+        return self.get_batch(str(batch["batch_id"]))
 
     def create_batch(
         self,
@@ -771,6 +958,17 @@ class IngestionService:
                     utc_now(),
                 ),
             )
+            self._record_review_event(
+                connection,
+                photo_id,
+                candidate.photo_type,
+                "rule",
+                "filename_rules",
+                "suggested",
+                actor_version=candidate.model_version,
+                confidence=candidate.confidence,
+                notes=candidate.reason,
+            )
 
     def _create_preview(
         self, source: Path, preview_dir: Path, photo_id: str
@@ -827,6 +1025,87 @@ class IngestionService:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def _record_batch_integrity(
+        self,
+        batch_id: str,
+        integrity: dict[str, object],
+        override_confirmed: bool,
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO batch_integrity_checks (
+                    batch_id, status, site_id, observation_date, photo_count,
+                    issue_count, warning_count, override_confirmed, checked_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    batch_id,
+                    integrity["status"],
+                    integrity["site_id"],
+                    integrity["observation_date"],
+                    integrity["photo_count"],
+                    integrity["issue_count"],
+                    integrity["warning_count"],
+                    int(override_confirmed),
+                    utc_now(),
+                ),
+            )
+            connection.execute(
+                "DELETE FROM batch_integrity_files WHERE batch_id = ?", (batch_id,)
+            )
+            connection.executemany(
+                """
+                INSERT INTO batch_integrity_files (
+                    batch_id, file_index, source_filename, captured_at,
+                    nearest_site_id, distance_meters, runner_up_margin_meters,
+                    site_check, date_check, blocking, warning
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        batch_id,
+                        item["file_index"],
+                        item["filename"],
+                        item["captured_at"],
+                        item["nearest_site_id"],
+                        item["distance_meters"],
+                        item["runner_up_margin_meters"],
+                        item["site_check"],
+                        item["date_check"],
+                        int(bool(item["blocking"])),
+                        int(bool(item["warning"])),
+                    )
+                    for item in integrity["files"]  # type: ignore[index]
+                ],
+            )
+
+    def audit_batch_integrity(self, batch_id: str) -> dict[str, object]:
+        """Rebuild an integrity audit for a staged or published local batch."""
+
+        batch = self.get_batch(batch_id)
+        metadata: list[PhotoMetadata] = []
+        for photo in batch["photos"]:  # type: ignore[index]
+            source = (
+                self.paths.batch_dir
+                / batch_id
+                / "original"
+                / str(photo["stored_filename"])
+            )
+            if not source.exists():
+                raise IngestionError(
+                    f"Cannot audit '{batch_id}'; staged original '{source.name}' is missing."
+                )
+            metadata.append(extract_photo_metadata(source, str(photo["source_filename"])))
+        suggestion = suggest_batch_metadata(metadata, self._read_site_anchors())
+        integrity = assess_batch_integrity(
+            suggestion["files"],  # type: ignore[arg-type]
+            str(batch["site_id"]),
+            str(batch["observation_date"]),
+        )
+        self._record_batch_integrity(batch_id, integrity, False)
+        return integrity
+
     def get_batch(self, batch_id: str) -> dict[str, object]:
         with self._connection() as connection:
             batch = connection.execute(
@@ -838,8 +1117,43 @@ class IngestionService:
                 "SELECT * FROM photos WHERE batch_id = ? ORDER BY source_filename, photo_id",
                 (batch_id,),
             ).fetchall()
+            integrity = connection.execute(
+                "SELECT * FROM batch_integrity_checks WHERE batch_id = ?", (batch_id,)
+            ).fetchone()
+            integrity_files = connection.execute(
+                """
+                SELECT * FROM batch_integrity_files
+                WHERE batch_id = ? ORDER BY file_index
+                """,
+                (batch_id,),
+            ).fetchall()
+            review_events = connection.execute(
+                """
+                SELECT event.* FROM review_events event
+                JOIN photos photo ON photo.photo_id = event.photo_id
+                WHERE photo.batch_id = ?
+                ORDER BY event.created_at,
+                         CASE WHEN event.action = 'suggested' THEN 0 ELSE 1 END,
+                         event.review_event_id
+                """,
+                (batch_id,),
+            ).fetchall()
         result = dict(batch)
-        result["photos"] = [dict(photo) for photo in photos]
+        events_by_photo: dict[str, list[dict[str, object]]] = {}
+        for event in review_events:
+            events_by_photo.setdefault(str(event["photo_id"]), []).append(dict(event))
+        result["photos"] = [
+            {
+                **dict(photo),
+                "review_events": events_by_photo.get(str(photo["photo_id"]), []),
+            }
+            for photo in photos
+        ]
+        result["integrity"] = (
+            {**dict(integrity), "files": [dict(item) for item in integrity_files]}
+            if integrity is not None
+            else None
+        )
         return result
 
     def preview_path(self, photo_id: str) -> Path:
@@ -855,12 +1169,25 @@ class IngestionService:
             raise IngestionError(f"Preview file is missing for '{photo_id}'.")
         return path
 
-    def review_photo(self, photo_id: str, photo_type: str, notes: str = "") -> dict[str, object]:
+    def review_photo(
+        self,
+        photo_id: str,
+        photo_type: str,
+        notes: str = "",
+        actor_type: str = "human",
+        actor_id: str = "project_owner",
+    ) -> dict[str, object]:
         if photo_type not in PHOTO_TYPES or photo_type == "unclassified":
             raise IngestionError("Choose a resolved photo type before marking the photo reviewed.")
+        if actor_type not in REVIEW_ACTOR_TYPES or not actor_id.strip():
+            raise IngestionError("Review actor metadata is invalid.")
         with self._connection() as connection:
             row = connection.execute(
-                "SELECT batch_id FROM photos WHERE photo_id = ?", (photo_id,)
+                """
+                SELECT batch_id, reviewed_type, review_status
+                FROM photos WHERE photo_id = ?
+                """,
+                (photo_id,),
             ).fetchone()
             if row is None:
                 raise IngestionError(f"Unknown photo '{photo_id}'.")
@@ -872,11 +1199,102 @@ class IngestionService:
                 """,
                 (photo_type, notes.strip(), photo_id),
             )
+            if row["reviewed_type"] is None:
+                action = "verified"
+            elif row["reviewed_type"] == photo_type:
+                action = "confirmed"
+            else:
+                action = "corrected"
+            self._record_review_event(
+                connection,
+                photo_id,
+                photo_type,
+                actor_type,
+                actor_id.strip(),
+                action,
+                notes=notes,
+            )
             self._refresh_batch_status(connection, row["batch_id"])
         return self.get_batch(row["batch_id"])
 
-    def accept_explicit_suggestions(self, batch_id: str) -> dict[str, object]:
+    def backfill_review_events(
+        self, verified_actor_type: str, verified_actor_id: str
+    ) -> dict[str, int]:
+        """Create audit events for legacy ingestion rows without inventing reviewer identity."""
+
+        if verified_actor_type not in REVIEW_ACTOR_TYPES or not verified_actor_id.strip():
+            raise IngestionError("Review actor metadata is invalid.")
+        candidate_events = 0
+        verified_events = 0
         with self._connection() as connection:
+            photos = connection.execute("SELECT * FROM photos ORDER BY created_at").fetchall()
+            for photo in photos:
+                candidate_exists = connection.execute(
+                    """
+                    SELECT 1 FROM review_events
+                    WHERE photo_id = ? AND action = 'suggested'
+                    LIMIT 1
+                    """,
+                    (photo["photo_id"],),
+                ).fetchone()
+                if candidate_exists is None:
+                    self._record_review_event(
+                        connection,
+                        str(photo["photo_id"]),
+                        str(photo["candidate_type"]),
+                        "rule",
+                        "filename_rules",
+                        "suggested",
+                        actor_version=str(photo["label_model_version"]),
+                        confidence=float(photo["candidate_confidence"]),
+                        notes=str(photo["candidate_reason"]),
+                    )
+                    candidate_events += 1
+
+                verified_exists = connection.execute(
+                    """
+                    SELECT 1 FROM review_events
+                    WHERE photo_id = ? AND action != 'suggested'
+                    LIMIT 1
+                    """,
+                    (photo["photo_id"],),
+                ).fetchone()
+                if photo["reviewed_type"] and verified_exists is None:
+                    self._record_review_event(
+                        connection,
+                        str(photo["photo_id"]),
+                        str(photo["reviewed_type"]),
+                        verified_actor_type,
+                        verified_actor_id.strip(),
+                        "verified",
+                        notes=str(photo["review_notes"])
+                        or "Backfilled from an existing verified ingestion review.",
+                    )
+                    verified_events += 1
+        return {
+            "candidate_events": candidate_events,
+            "verified_events": verified_events,
+        }
+
+    def accept_explicit_suggestions(
+        self,
+        batch_id: str,
+        actor_type: str = "human",
+        actor_id: str = "project_owner",
+    ) -> dict[str, object]:
+        if actor_type not in REVIEW_ACTOR_TYPES or not actor_id.strip():
+            raise IngestionError("Review actor metadata is invalid.")
+        with self._connection() as connection:
+            accepted = connection.execute(
+                """
+                SELECT photo_id, candidate_type FROM photos
+                WHERE batch_id = ?
+                  AND review_status != 'verified'
+                  AND candidate_confidence >= 0.95
+                  AND candidate_type != 'unclassified'
+                """,
+                (batch_id,),
+            ).fetchall()
             connection.execute(
                 """
                 UPDATE photos
@@ -893,6 +1311,16 @@ class IngestionService:
                 """,
                 (batch_id,),
             )
+            for photo in accepted:
+                self._record_review_event(
+                    connection,
+                    str(photo["photo_id"]),
+                    str(photo["candidate_type"]),
+                    actor_type,
+                    actor_id.strip(),
+                    "accepted",
+                    notes="Accepted explicit filename suggestion.",
+                )
             self._refresh_batch_status(connection, batch_id)
         return self.get_batch(batch_id)
 

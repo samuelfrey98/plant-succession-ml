@@ -32,17 +32,6 @@
         </div>
 
         <form id="upload-form">
-          <label for="site-id">Monitoring site</label>
-          <select id="site-id" name="site_id" required>
-            <option value="">Loading sites...</option>
-          </select>
-
-          <label for="observation-date">Observation date</label>
-          <input id="observation-date" name="observation_date" type="date" required>
-
-          <label for="observation-notes">Field note <span>optional</span></label>
-          <textarea id="observation-notes" name="observation_notes" rows="3" placeholder="A short note about this visit"></textarea>
-
           <label class="drop-zone" id="drop-zone" for="files">
             <i data-lucide="image-plus" aria-hidden="true"></i>
             <strong>Choose photos</strong>
@@ -51,6 +40,32 @@
           </label>
           <div class="file-summary" id="file-summary">No files selected</div>
           <div class="metadata-suggestion hidden" id="metadata-suggestion" role="status"></div>
+
+          <label for="site-id">Confirm monitoring site</label>
+          <select id="site-id" name="site_id" required>
+            <option value="">Loading sites...</option>
+          </select>
+
+          <label for="observation-date">Confirm observation date</label>
+          <input id="observation-date" name="observation_date" type="date" required>
+
+          <section class="batch-integrity hidden" id="batch-integrity" aria-live="polite">
+            <div class="integrity-heading">
+              <i data-lucide="scan-search" aria-hidden="true"></i>
+              <div>
+                <strong>Batch integrity</strong>
+                <p id="integrity-summary"></p>
+              </div>
+            </div>
+            <ul class="integrity-issues" id="integrity-issues"></ul>
+            <label class="integrity-override hidden" id="integrity-override">
+              <input id="integrity-override-confirmed" name="integrity_override_confirmed" type="checkbox" value="true">
+              <span>I reviewed these exceptions and want to keep the batch together.</span>
+            </label>
+          </section>
+
+          <label for="observation-notes">Field note <span>optional</span></label>
+          <textarea id="observation-notes" name="observation_notes" rows="3" placeholder="A short note about this visit"></textarea>
 
           <button class="primary-button" id="upload-button" type="submit">
             <i data-lucide="upload" aria-hidden="true"></i>

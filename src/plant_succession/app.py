@@ -20,6 +20,7 @@ from plant_succession.ingestion import IngestionError, IngestionPaths, Ingestion
 ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = Path(__file__).resolve().parent / "web"
 DEFAULT_PUBLIC_DIR = ROOT / "data" / "public"
+REVIEWER_ID = os.environ.get("PLANT_REVIEWER_ID", "project_owner")
 
 
 def initialize_public_data(source_dir: Path, public_dir: Path) -> None:
@@ -172,6 +173,7 @@ def create_batch_from_suggestion(
     site_id: str = Form(...),
     observation_date: str = Form(...),
     observation_notes: str = Form(""),
+    integrity_override_confirmed: bool = Form(False),
 ) -> dict[str, object]:
     try:
         return service.create_batch_from_upload_suggestion(
@@ -179,6 +181,7 @@ def create_batch_from_suggestion(
             site_id,
             observation_date,
             observation_notes,
+            integrity_override_confirmed,
         )
     except IngestionError as error:
         raise bad_request(error) from error
@@ -195,7 +198,13 @@ def preview(photo_id: str) -> FileResponse:
 @app.patch("/api/photos/{photo_id}")
 def review_photo(photo_id: str, update: ReviewUpdate) -> dict[str, object]:
     try:
-        return service.review_photo(photo_id, update.photo_type, update.notes)
+        return service.review_photo(
+            photo_id,
+            update.photo_type,
+            update.notes,
+            actor_type="human",
+            actor_id=REVIEWER_ID,
+        )
     except IngestionError as error:
         raise bad_request(error) from error
 
@@ -203,7 +212,11 @@ def review_photo(photo_id: str, update: ReviewUpdate) -> dict[str, object]:
 @app.post("/api/batches/{batch_id}/accept-suggestions")
 def accept_suggestions(batch_id: str) -> dict[str, object]:
     try:
-        return service.accept_explicit_suggestions(batch_id)
+        return service.accept_explicit_suggestions(
+            batch_id,
+            actor_type="human",
+            actor_id=REVIEWER_ID,
+        )
     except IngestionError as error:
         raise bad_request(error) from error
 

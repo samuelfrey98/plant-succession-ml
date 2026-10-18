@@ -21,6 +21,7 @@ from plant_succession.ingestion import (  # noqa: E402
     IngestionService,
     PhotoMetadata,
     SiteAnchor,
+    assess_batch_integrity,
     extract_photo_metadata,
     infer_photo_type,
     suggest_batch_metadata,
@@ -99,6 +100,17 @@ class IngestionServiceTests(unittest.TestCase):
         )
         batch = self.service.review_photo(unresolved["photo_id"], "quadrat")
         self.assertEqual(batch["status"], "ready")
+        for photo in batch["photos"]:
+            self.assertEqual(photo["review_events"][0]["actor_type"], "rule")
+            self.assertIn(photo["review_events"][-1]["actor_type"], {"human"})
+        accepted = next(
+            photo for photo in batch["photos"] if photo["source_filename"] == "wide.jpg"
+        )
+        self.assertEqual(accepted["review_events"][-1]["action"], "accepted")
+        manually_reviewed = next(
+            photo for photo in batch["photos"] if photo["source_filename"] == "IMG_4021.jpg"
+        )
+        self.assertEqual(manually_reviewed["review_events"][-1]["action"], "verified")
 
         batch = self.service.publish_batch(batch["batch_id"])
         self.assertEqual(batch["status"], "published")
@@ -221,6 +233,53 @@ class IngestionServiceTests(unittest.TestCase):
         self.assertTrue(any("multiple sites" in warning for warning in suggestion["warnings"]))
         self.assertTrue(any("multiple capture dates" in warning for warning in suggestion["warnings"]))
 
+    def test_batch_integrity_identifies_per_file_site_and_date_outliers(self):
+        files = [
+            {
+                "filename": "expected.heic",
+                "captured_at": "2026-10-17T10:00:00",
+                "gps_present": True,
+                "nearest_site_id": "7",
+                "distance_meters": 3.2,
+                "runner_up_margin_meters": 48.0,
+            },
+            {
+                "filename": "wrong-site.heic",
+                "captured_at": "2026-10-16T10:00:00",
+                "gps_present": True,
+                "nearest_site_id": "8",
+                "distance_meters": 2.1,
+                "runner_up_margin_meters": 46.0,
+            },
+        ]
+
+        integrity = assess_batch_integrity(files, "7", "2026-10-17")
+
+        self.assertEqual(integrity["status"], "attention_required")
+        self.assertEqual(integrity["issue_count"], 1)
+        self.assertTrue(integrity["requires_override"])
+        self.assertEqual(integrity["files"][0]["site_check"], "match")
+        self.assertEqual(integrity["files"][1]["site_check"], "site_mismatch")
+        self.assertEqual(integrity["files"][1]["date_check"], "date_mismatch")
+
+    def test_batch_integrity_passes_consistent_files(self):
+        files = [
+            {
+                "filename": "expected.heic",
+                "captured_at": "2026-10-17T10:00:00",
+                "gps_present": True,
+                "nearest_site_id": "7",
+                "distance_meters": 3.2,
+                "runner_up_margin_meters": 48.0,
+            }
+        ]
+
+        integrity = assess_batch_integrity(files, "7", "2026-10-17")
+
+        self.assertEqual(integrity["status"], "passed")
+        self.assertEqual(integrity["issue_count"], 0)
+        self.assertFalse(integrity["requires_override"])
+
     def test_exif_capture_date_is_extracted(self):
         path = self.root / "dated.jpg"
         path.write_bytes(dated_image_bytes("2026:07:20 14:12:03").getvalue())
@@ -237,11 +296,17 @@ class IngestionServiceTests(unittest.TestCase):
         self.assertEqual(prepared["observation_date"], "2026-07-20")
         self.assertTrue((self.service.paths.suggestion_dir / token).exists())
 
+        with self.assertRaisesRegex(IngestionError, "integrity"):
+            self.service.create_batch_from_upload_suggestion(
+                token, "1", "2026-07-20", "Prepared upload test."
+            )
         batch = self.service.create_batch_from_upload_suggestion(
-            token, "1", "2026-07-20", "Prepared upload test."
+            token, "1", "2026-07-20", "Prepared upload test.", True
         )
 
         self.assertEqual(batch["photo_count"], 1)
+        self.assertEqual(batch["integrity"]["status"], "attention_required")
+        self.assertEqual(batch["integrity"]["override_confirmed"], 1)
         self.assertFalse((self.service.paths.suggestion_dir / token).exists())
 
 

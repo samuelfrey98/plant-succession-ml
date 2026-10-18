@@ -25,6 +25,9 @@ private upload cache + EXIF site/date suggestion
 human site/date confirmation
       |
       v
+per-photo batch-integrity gate
+      |
+      v
 private staging + SHA-256 duplicate check
       |
       v
@@ -79,6 +82,20 @@ before the temporary upload becomes a staging batch. A 150 m maximum match dista
 records from being assigned to a monitoring site, while close sites can still produce a low-confidence
 suggestion for human review.
 
+## Batch Integrity
+
+Before staging, every selected photo is checked independently against the confirmed batch site and date.
+The interface names files with a different nearest site, a different capture date, missing metadata, or a
+location outside the 150 m match radius. Blocking exceptions require an explicit acknowledgement; the
+server repeats the check so the gate cannot be bypassed by browser state alone.
+
+The local SQLite audit stores one batch-level result plus one row per checked file. Use the repeatable
+audit command to rebuild those records for existing local batches:
+
+```bash
+.venv/bin/python scripts/audit_batch_integrity.py
+```
+
 Build the ignored private anchor file from the original workbook without copying coordinates into the
 public site registry:
 
@@ -118,6 +135,7 @@ export PLANT_INGESTION_STATE="$HOME/PlantSuccession/ingestion"
 export PLANT_PHOTO_ARCHIVE="$HOME/PlantSuccession/photos"
 export PLANT_INGESTION_USERNAME="admin"
 export PLANT_INGESTION_PASSWORD="choose-a-local-test-password"
+export PLANT_REVIEWER_ID="project_owner"
 .venv/bin/uvicorn plant_succession.app:app --app-dir src --host 127.0.0.1 --port 8765
 ```
 
@@ -128,8 +146,22 @@ The first labeler is deliberately conservative. It recognizes explicit terms suc
 as `IMG_4021.HEIC` remain `unclassified` and enter human review.
 
 The database stores the suggested type, confidence, reason, and labeler version separately from the
-verified human label. This creates a ground-truth trail suitable for evaluating a future vision model.
-Camera order is never used as evidence.
+canonical verified label. It also writes append-only review events containing the label, action,
+actor type, actor ID, actor/model version, confidence, note, and timestamp. A rule suggestion and a
+human verification therefore remain separate records, and later humans or models can add judgments
+without erasing earlier ones. Camera order is never used as evidence.
+
+`PLANT_REVIEWER_ID` supplies the stable local alias for reviews submitted through the app. This local
+single-user authentication is sufficient for the current workflow. A multi-user deployment should use
+real authenticated identities rather than allowing clients to submit arbitrary reviewer names.
+
+For legacy local ingestion rows, review events can be backfilled only when the reviewer identity is known:
+
+```bash
+.venv/bin/python scripts/backfill_review_events.py \
+  --verified-actor-type human \
+  --verified-actor-id project_owner
+```
 
 ## Publication Guarantees
 

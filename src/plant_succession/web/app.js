@@ -4,6 +4,8 @@ const state = {
   selectedBatch: null,
   filter: "active",
   uploadToken: null,
+  uploadSuggestion: null,
+  integrityRequiresOverride: false,
   preparationId: 0,
 };
 
@@ -219,6 +221,10 @@ async function uploadBatch(event) {
     showToast("Wait for photo metadata preparation to finish.", true);
     return;
   }
+  if (state.integrityRequiresOverride && !document.querySelector("#integrity-override-confirmed").checked) {
+    showToast("Review and acknowledge the batch-integrity exceptions first.", true);
+    return;
+  }
   button.disabled = true;
   button.innerHTML = '<i data-lucide="loader-circle" aria-hidden="true"></i> Staging photos...';
   iconRefresh();
@@ -228,18 +234,21 @@ async function uploadBatch(event) {
     form.append("upload_token", state.uploadToken);
     state.selectedBatch = await api("/api/batches/from-suggestion", {method: "POST", body: form});
     state.uploadToken = null;
+    state.uploadSuggestion = null;
+    state.integrityRequiresOverride = false;
     event.target.reset();
     document.querySelector("#observation-date").valueAsDate = new Date();
     document.querySelector("#file-summary").textContent = "No files selected";
     document.querySelector("#metadata-suggestion").classList.add("hidden");
+    document.querySelector("#batch-integrity").classList.add("hidden");
     await loadDashboard();
     renderReview();
     showToast(`Staged ${state.selectedBatch.photo_count} photos.`);
   } catch (error) {
     showToast(error.message, true);
   } finally {
-    button.disabled = false;
     button.innerHTML = '<i data-lucide="upload" aria-hidden="true"></i> Stage batch';
+    updateStageButton();
     iconRefresh();
   }
 }
@@ -266,11 +275,102 @@ function renderMetadataSuggestion(result) {
   target.classList.toggle("warning", Boolean(result.warnings.length) || result.site_confidence === "low" || result.date_confidence === "low");
 }
 
+function integrityResult(file, siteId, observationDate) {
+  const problems = [];
+  let blocking = false;
+  if (!file.gps_present || !file.nearest_site_id) {
+    problems.push("GPS metadata unavailable");
+    blocking = true;
+  } else if (Number(file.distance_meters) > 150) {
+    problems.push(`location is ${file.distance_meters} m from the nearest site anchor`);
+    blocking = true;
+  } else if (String(file.nearest_site_id) !== String(siteId)) {
+    problems.push(`nearest to Site ${file.nearest_site_id} (${file.distance_meters} m)`);
+    blocking = true;
+  } else if (file.runner_up_margin_meters !== null && Number(file.runner_up_margin_meters) < 15) {
+    problems.push("location is close to another site anchor");
+  }
+
+  const captureDate = file.captured_at ? String(file.captured_at).slice(0, 10) : null;
+  if (!captureDate) {
+    problems.push("capture date unavailable");
+    blocking = true;
+  } else if (captureDate !== observationDate) {
+    problems.push(`captured ${captureDate}`);
+    blocking = true;
+  }
+  return {problems, blocking};
+}
+
+function updateStageButton() {
+  const button = document.querySelector("#upload-button");
+  const siteId = document.querySelector("#site-id").value;
+  const observationDate = document.querySelector("#observation-date").value;
+  const override = document.querySelector("#integrity-override-confirmed").checked;
+  button.disabled = !state.uploadToken || !siteId || !observationDate
+    || (state.integrityRequiresOverride && !override);
+}
+
+function renderBatchIntegrity() {
+  const panel = document.querySelector("#batch-integrity");
+  const summary = document.querySelector("#integrity-summary");
+  const list = document.querySelector("#integrity-issues");
+  const overrideRow = document.querySelector("#integrity-override");
+  const override = document.querySelector("#integrity-override-confirmed");
+  if (!state.uploadSuggestion) {
+    state.integrityRequiresOverride = false;
+    panel.classList.add("hidden");
+    updateStageButton();
+    return;
+  }
+
+  const siteId = document.querySelector("#site-id").value;
+  const observationDate = document.querySelector("#observation-date").value;
+  panel.classList.remove("hidden");
+  if (!siteId || !observationDate) {
+    state.integrityRequiresOverride = false;
+    summary.textContent = "Confirm a site and date to check every selected photo.";
+    list.innerHTML = "";
+    overrideRow.classList.add("hidden");
+    updateStageButton();
+    return;
+  }
+
+  const exceptions = state.uploadSuggestion.files.map((file) => ({
+    file,
+    ...integrityResult(file, siteId, observationDate),
+  })).filter((item) => item.problems.length);
+  const blocking = exceptions.filter((item) => item.blocking);
+  state.integrityRequiresOverride = blocking.length > 0;
+  panel.classList.toggle("attention", exceptions.length > 0);
+  if (!exceptions.length) {
+    summary.textContent = `${state.uploadSuggestion.files.length} photos match ${siteLabel(siteId)} and ${observationDate}.`;
+    list.innerHTML = "";
+    override.checked = false;
+    overrideRow.classList.add("hidden");
+  } else {
+    summary.textContent = blocking.length
+      ? `${blocking.length} of ${state.uploadSuggestion.files.length} photos need attention before staging.`
+      : `${exceptions.length} photos have location ambiguity; review the details below.`;
+    list.innerHTML = exceptions.map(({file, problems, blocking: isBlocking}) => `
+      <li><strong>${escapeHtml(file.filename)}</strong>: ${escapeHtml(problems.join("; "))}${isBlocking ? "" : " (warning)"}</li>
+    `).join("");
+    overrideRow.classList.toggle("hidden", !state.integrityRequiresOverride);
+    if (!state.integrityRequiresOverride) override.checked = false;
+  }
+  updateStageButton();
+  iconRefresh();
+}
+
 async function prepareUpload(files) {
   const button = document.querySelector("#upload-button");
   const target = document.querySelector("#metadata-suggestion");
   const preparationId = ++state.preparationId;
   state.uploadToken = null;
+  state.uploadSuggestion = null;
+  state.integrityRequiresOverride = false;
+  document.querySelector("#batch-integrity").classList.add("hidden");
+  document.querySelector("#integrity-override-confirmed").checked = false;
   target.textContent = "Reading capture time and location metadata...";
   target.classList.remove("hidden", "warning");
   button.disabled = true;
@@ -282,7 +382,9 @@ async function prepareUpload(files) {
     const result = await api("/api/upload-suggestions", {method: "POST", body: form});
     if (preparationId !== state.preparationId) return;
     state.uploadToken = result.upload_token;
+    state.uploadSuggestion = result;
     renderMetadataSuggestion(result);
+    renderBatchIntegrity();
   } catch (error) {
     if (preparationId !== state.preparationId) return;
     target.textContent = error.message;
@@ -291,8 +393,8 @@ async function prepareUpload(files) {
     showToast(error.message, true);
   } finally {
     if (preparationId === state.preparationId) {
-      button.disabled = !state.uploadToken;
       button.innerHTML = '<i data-lucide="upload" aria-hidden="true"></i> Stage batch';
+      updateStageButton();
       iconRefresh();
     }
   }
@@ -335,8 +437,12 @@ function setupFilePicker() {
       await prepareUpload([...input.files]);
     } else {
       state.uploadToken = null;
+      state.uploadSuggestion = null;
+      state.integrityRequiresOverride = false;
       state.preparationId += 1;
       document.querySelector("#metadata-suggestion").classList.add("hidden");
+      document.querySelector("#batch-integrity").classList.add("hidden");
+      updateStageButton();
     }
   });
   ["dragenter", "dragover"].forEach((name) => zone.addEventListener(name, () => zone.classList.add("dragging")));
@@ -346,6 +452,9 @@ function setupFilePicker() {
 async function initialize() {
   document.querySelector("#observation-date").valueAsDate = new Date();
   document.querySelector("#upload-form").addEventListener("submit", uploadBatch);
+  document.querySelector("#site-id").addEventListener("change", renderBatchIntegrity);
+  document.querySelector("#observation-date").addEventListener("change", renderBatchIntegrity);
+  document.querySelector("#integrity-override-confirmed").addEventListener("change", updateStageButton);
   document.querySelector("#accept-button").addEventListener("click", acceptSuggestions);
   document.querySelector("#publish-button").addEventListener("click", publishBatch);
   document.querySelectorAll(".segment").forEach((button) => button.addEventListener("click", () => {

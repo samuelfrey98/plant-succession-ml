@@ -7,7 +7,7 @@ The pipeline converts a real archive of repeatable field photography into saniti
 photo-backed observation records, validation results, and reproducible longitudinal outputs. The image
 archive can support later computer-vision experiments, but the current portfolio focus is data engineering.
 
-**11 sites | 63 visit folders | 63 visually reviewed observations | 505 verified field photos | May 25-July 20, 2026**
+**11 sites | 74 photo-backed observations | 589 verified field photos | May 25-October 17, 2026**
 
 ## Project Status
 
@@ -19,17 +19,18 @@ Current implemented assets:
 
 - 11 monitoring sites, including one later-established sensitive-fern disturbance site
 - A local FastAPI ingestion service with private staging, review queues, and validated publication
-- Content-hash duplicate detection, HEIC previews, private EXIF site/date suggestions, and versioned candidate labels
+- Content-hash duplicate detection, HEIC previews, private EXIF site/date suggestions, and per-file batch-integrity checks
+- Append-only review events that keep rule/model suggestions separate from human verification
 - A structured Google Form for site observations
 - A Google Sheets workbook with review, source-note, site-check, and disturbance-event tables
 - Repeatable photo protocols for wide, quadrat, close-up, and context photos
 - Initial schema design for ecological observations and disturbance history
-- A sanitized 505-row photo manifest with deterministic IDs and logical archive paths
-- A 63-row observation table derived from photo-backed site visits, with explicit provenance
-- A 63-row upload-batch summary used to audit completeness independently of observation content
+- A sanitized 589-row photo manifest with deterministic IDs and logical archive paths
+- A 74-row observation table derived from photo-backed site visits, with explicit provenance
+- A 74-row upload-batch summary used to audit completeness independently of observation content
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
 - A private Google Sheets review workbook synchronized with the public CSV structure
-- Completed visual reviews for Sites 1-11, with 505 verified photo roles and uncertainty-aware cover estimates
+- Completed photo-role reviews for Sites 1-11, with 589 verified roles; 63 historical observations also have uncertainty-aware cover estimates
 - 11 preserved field notes normalized into 16 explicit site checks and 15 disturbance events
 - Source-note lineage that keeps unmentioned sites unknown and separates phenology from disturbance
 - A reproducible analysis-ready join with explicit completeness and longitudinal fields
@@ -47,7 +48,8 @@ flow into the same validated public tables used by the analysis pipeline.
 
 Selecting photos reads their EXIF capture timestamps and GPS coordinates, then prefills the most likely
 observation date and monitoring site. Exact site anchors remain in an ignored private file, suggestions
-show confidence and distance, and the user confirms or corrects both fields before staging.
+show confidence and distance, and the user confirms or corrects both fields before staging. A batch-integrity
+gate names individual site/date exceptions and requires an explicit override before they can enter review.
 
 ![Plant Succession local ingestion queue](docs/screenshots/ingestion_app.png)
 
