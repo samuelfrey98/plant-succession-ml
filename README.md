@@ -22,6 +22,7 @@ Current implemented assets:
 - Content-hash duplicate detection, HEIC previews, private EXIF site/date suggestions, and per-file batch-integrity checks
 - Append-only review events that keep rule/model suggestions separate from human verification
 - A batch-level observation review stage for cover estimates, uncertainty-aware taxon labels, and explicit completeness
+- Optional vision-model drafts with per-field confidence, evidence, and human approval before publication
 - A structured Google Form for site observations
 - A Google Sheets workbook with review, source-note, site-check, and disturbance-event tables
 - Repeatable photo protocols for wide, quadrat, close-up, and context photos
@@ -53,6 +54,11 @@ show confidence and distance, and the user confirms or corrects both fields befo
 gate names individual site/date exceptions and requires an explicit override before they can enter review.
 After photo roles are resolved, the batch enters observation review. Drafts remain private, blank values
 remain null, and only an explicitly completed review can proceed to validated publication.
+
+The Observation tab can optionally send optimized previews to a configured vision model for a structured
+first pass. Its suggestions fill an editable form and are retained as separate audit events; they do not
+become canonical data until a human saves the review. This is general-purpose model assistance, not a
+custom-trained ecological classifier or expert taxonomic verification.
 
 ![Plant Succession local ingestion queue](docs/screenshots/ingestion_app.png)
 

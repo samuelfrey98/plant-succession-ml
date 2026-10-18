@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Review queue for Plant Succession field-photo ingestion.">
     <title>Plant Succession Ingest</title>
-    <link rel="stylesheet" href="/assets/styles.css">
+    <link rel="stylesheet" href="/assets/styles.css?v=20261018-2">
     <script defer src="/assets/lucide.min.js"></script>
-    <script defer src="/assets/app.js"></script>
+    <script defer src="/assets/app.js?v=20261018-2"></script>
   </head>
   <body>
     <header class="app-header">
@@ -148,9 +148,45 @@
 
           <section class="observation-review-panel hidden" id="observation-review-panel" role="tabpanel" aria-labelledby="observation-tab">
             <div class="observation-stage-note" id="observation-stage-note"></div>
+            <section class="machine-assist" aria-labelledby="machine-assist-title">
+              <div class="machine-assist-header">
+                <div>
+                  <p class="eyebrow">Optional first pass</p>
+                  <h3 id="machine-assist-title">Machine-assisted draft</h3>
+                  <p id="machine-config-state">Checking model availability...</p>
+                </div>
+                <button class="secondary-button" id="machine-review-button" type="button" disabled>
+                  <i data-lucide="scan-search" aria-hidden="true"></i>
+                  Generate machine draft
+                </button>
+              </div>
+              <p class="machine-privacy"><i data-lucide="shield" aria-hidden="true"></i><span>Nothing is sent when you open a batch. This action sends optimized previews to the configured model; its output remains a suggestion until you edit and save it.</span></p>
+              <div class="machine-result hidden" id="machine-result" aria-live="polite">
+                <div>
+                  <strong>Latest suggestion</strong>
+                  <p id="machine-summary"></p>
+                  <p class="machine-priority" id="machine-priority"></p>
+                </div>
+                <details>
+                  <summary>View confidence and evidence</summary>
+                  <ul id="machine-assessments"></ul>
+                </details>
+              </div>
+            </section>
             <form id="observation-review-form">
               <fieldset>
                 <legend>Surface cover</legend>
+                <details class="field-guide">
+                  <summary>How to judge surface cover</summary>
+                  <dl>
+                    <div><dt>Vegetation</dt><dd>Live vegetation projected over the monitored surface.</dd></div>
+                    <div><dt>Bare ground</dt><dd>Exposed mineral soil without vegetation, litter, or coarse rock covering it.</dd></div>
+                    <div><dt>Gravel / rock</dt><dd>Visible gravel, rubble, or rock covering the surface.</dd></div>
+                    <div><dt>Litter / mulch</dt><dd>Detached leaves, stems, mulch, or wood chips on the ground.</dd></div>
+                    <div><dt>Standing dead</dt><dd>Upright attached dead vegetation. It may overlap the ground-surface categories.</dd></div>
+                  </dl>
+                  <p>Estimate the first four categories to about 100% only when the framing shows the full monitored surface. Leave unsupported values blank.</p>
+                </details>
                 <div class="cover-grid">
                   <label>Vegetation <span>%</span><input name="estimated_total_vegetation_cover_pct" type="number" min="0" max="100" step="1" inputmode="numeric"></label>
                   <label>Bare ground <span>%</span><input name="bare_ground_pct" type="number" min="0" max="100" step="1" inputmode="numeric"></label>
@@ -162,6 +198,16 @@
 
               <fieldset>
                 <legend>Taxa</legend>
+                <details class="field-guide">
+                  <summary>How to label taxa and reproductive state</summary>
+                  <dl>
+                    <div><dt>Dominant / secondary / tertiary</dt><dd>Order taxa by visible live cover, not by photo order or visual interest.</dd></div>
+                    <div><dt>Rank</dt><dd>Use species only with diagnostic evidence; otherwise use genus, family, unknown, or a stable morphotype such as <code>unknown_grass_01</code>.</dd></div>
+                    <div><dt>Confidence</dt><dd><strong>Confident</strong>: diagnostic evidence is clear. <strong>Likely</strong>: good fit with some uncertainty. <strong>Uncertain</strong>: tentative working label.</dd></div>
+                    <div><dt>Flowering</dt><dd>Yes only when open flowers are visible. Use Unknown when the relevant structures are not visible.</dd></div>
+                    <div><dt>Seed set</dt><dd>Yes only when fruit or seed structures are visible. Use Unknown when the photos cannot resolve it.</dd></div>
+                  </dl>
+                </details>
                 <div class="taxon-grid taxon-grid-head" aria-hidden="true">
                   <span>Role and label</span><span>Rank</span><span>Confidence</span><span>Flowering</span><span>Seed set</span>
                 </div>
@@ -190,6 +236,21 @@
 
               <fieldset>
                 <legend>Interpretation and completeness</legend>
+                <details class="field-guide">
+                  <summary>How to judge interpretation and review status</summary>
+                  <dl>
+                    <div><dt>New taxon detected</dt><dd>Yes only when comparison with earlier records supports that the taxon was not previously recorded at this site.</dd></div>
+                    <div><dt>Early colonization</dt><dd>Mostly open substrate with scattered pioneer plants.</dd></div>
+                    <div><dt>Developing herb layer</dt><dd>Herbaceous cover is expanding but remains discontinuous.</dd></div>
+                    <div><dt>Dense herb layer</dt><dd>Herbaceous vegetation is mostly continuous.</dd></div>
+                    <div><dt>Shrub establishment</dt><dd>Persistent woody shrubs are becoming structurally important.</dd></div>
+                    <div><dt>Young woodland</dt><dd>Young trees form the developing vegetation structure.</dd></div>
+                    <div><dt>Reviewed</dt><dd>All evidence available in this batch was assessed; fields may still be blank when unknowable.</dd></div>
+                    <div><dt>Partial</dt><dd>A relevant source or part of the batch could not be assessed. State what is missing in the completeness note.</dd></div>
+                    <div><dt>Observation note</dt><dd>Visible conditions, uncertainty, or context. Do not infer an unrecorded disturbance.</dd></div>
+                    <div><dt>Completeness note</dt><dd>Why the review is partial, such as missing framing or an unreadable close-up.</dd></div>
+                  </dl>
+                </details>
                 <div class="interpretation-grid">
                   <label>New taxon detected<select name="new_species_detected"><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>
                   <label>Successional stage<select name="successional_stage"><option value="">Not assessed</option><option value="early_colonization">Early colonization</option><option value="developing_herb_layer">Developing herb layer</option><option value="dense_herb_layer">Dense herb layer</option><option value="shrub_establishment">Shrub establishment</option><option value="young_woodland">Young woodland</option></select></label>

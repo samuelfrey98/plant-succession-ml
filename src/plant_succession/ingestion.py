@@ -24,6 +24,7 @@ from typing import BinaryIO, Iterable, Iterator
 from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 
+from plant_succession.machine_review import MachineReviewError, MachineReviewProvider
 from plant_succession.validate import validate_public_photo_data
 
 
@@ -542,9 +543,15 @@ def atomic_write_csv(
 class IngestionService:
     """Coordinates private staging, human review, and validated publication."""
 
-    def __init__(self, paths: IngestionPaths, max_file_bytes: int = MAX_FILE_BYTES):
+    def __init__(
+        self,
+        paths: IngestionPaths,
+        max_file_bytes: int = MAX_FILE_BYTES,
+        machine_reviewer: MachineReviewProvider | None = None,
+    ):
         self.paths = paths
         self.max_file_bytes = max_file_bytes
+        self.machine_reviewer = machine_reviewer
         self._publish_lock = threading.Lock()
         self.paths.state_dir.mkdir(parents=True, exist_ok=True)
         self.paths.batch_dir.mkdir(parents=True, exist_ok=True)
@@ -1319,7 +1326,106 @@ class IngestionService:
         result["observation_review_events"] = [
             dict(event) for event in observation_review_events
         ]
+        latest_machine_review = next(
+            (
+                event
+                for event in reversed(observation_review_events)
+                if event["actor_type"] == "model" and event["action"] == "suggested"
+            ),
+            None,
+        )
+        if latest_machine_review is None:
+            result["latest_machine_review"] = None
+        else:
+            try:
+                machine_payload = json.loads(str(latest_machine_review["payload_json"]))
+            except json.JSONDecodeError:
+                machine_payload = None
+            result["latest_machine_review"] = (
+                {
+                    **machine_payload,
+                    "created_at": latest_machine_review["created_at"],
+                }
+                if isinstance(machine_payload, dict)
+                else None
+            )
         return result
+
+    def machine_review_configuration(self) -> dict[str, object]:
+        if self.machine_reviewer is None:
+            return {
+                "available": False,
+                "provider": "",
+                "model": "",
+                "prompt_version": "",
+                "reason": "No machine-review provider is configured.",
+            }
+        return self.machine_reviewer.configuration()
+
+    def generate_machine_observation_review(self, batch_id: str) -> dict[str, object]:
+        if self.machine_reviewer is None:
+            raise IngestionError("No machine-review provider is configured.")
+        with self._connection() as connection:
+            batch = connection.execute(
+                "SELECT site_id, observation_date FROM batches WHERE batch_id = ?",
+                (batch_id,),
+            ).fetchone()
+            if batch is None:
+                raise IngestionError(f"Unknown batch '{batch_id}'.")
+            photos = connection.execute(
+                """
+                SELECT source_filename, preview_filename, reviewed_type, review_status
+                FROM photos WHERE batch_id = ? ORDER BY source_filename, photo_id
+                """,
+                (batch_id,),
+            ).fetchall()
+        if not photos or any(photo["review_status"] != "verified" for photo in photos):
+            raise IngestionError("Finish photo-role review before requesting machine review.")
+
+        review_photos: list[dict[str, str]] = []
+        for photo in photos:
+            preview_filename = str(photo["preview_filename"] or "")
+            preview_path = self.paths.batch_dir / batch_id / "previews" / preview_filename
+            if not preview_filename or not preview_path.exists():
+                raise IngestionError(
+                    f"Preview file is missing for '{photo['source_filename']}'."
+                )
+            review_photos.append(
+                {
+                    "filename": str(photo["source_filename"]),
+                    "photo_type": str(photo["reviewed_type"]),
+                    "path": str(preview_path),
+                }
+            )
+
+        try:
+            result = self.machine_reviewer.review(
+                site_id=str(batch["site_id"]),
+                observation_date=str(batch["observation_date"]),
+                photos=review_photos,
+            )
+        except MachineReviewError as error:
+            raise IngestionError(str(error)) from error
+
+        created_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO observation_review_events (
+                    review_event_id, batch_id, actor_type, actor_id,
+                    actor_version, action, payload_json, created_at
+                ) VALUES (?, ?, 'model', ?, ?, 'suggested', ?, ?)
+                """,
+                (
+                    f"observation_review_{uuid.uuid4().hex}",
+                    batch_id,
+                    str(result.get("provider") or "machine_review"),
+                    str(result.get("model") or "") or None,
+                    json.dumps(result, sort_keys=True, separators=(",", ":")),
+                    created_at,
+                ),
+            )
+        return {**result, "created_at": created_at}
 
     def preview_path(self, photo_id: str) -> Path:
         with self._connection() as connection:

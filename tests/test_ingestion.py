@@ -51,6 +51,52 @@ def csv_rows(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+class FakeMachineReviewer:
+    def configuration(self) -> dict[str, object]:
+        return {
+            "available": True,
+            "provider": "test_provider",
+            "model": "test_vision_v1",
+            "prompt_version": "test_prompt_v1",
+            "reason": "",
+        }
+
+    def review(
+        self,
+        *,
+        site_id: str,
+        observation_date: str,
+        photos: list[dict[str, str]],
+    ) -> dict[str, object]:
+        return {
+            "provider": "test_provider",
+            "model": "test_vision_v1",
+            "prompt_version": "test_prompt_v1",
+            "provider_response_id": "response_test_01",
+            "draft": {
+                "values": {
+                    "estimated_total_vegetation_cover_pct": 62,
+                    "bare_ground_pct": 28,
+                    "dominant_species": "Artemisia sp.",
+                    "dominant_taxon_rank": "genus",
+                    "dominant_species_confidence": "likely",
+                    "dominant_flowering": False,
+                    "successional_stage": "developing_herb_layer",
+                    "notes": f"Drafted from {len(photos)} verified photo for Site {site_id}.",
+                },
+                "assessments": [
+                    {
+                        "field_name": "estimated_total_vegetation_cover_pct",
+                        "confidence": "medium",
+                        "evidence": "The wide view shows discontinuous live cover.",
+                    }
+                ],
+                "overall_summary": f"Machine draft for {observation_date}.",
+                "review_priority_fields": ["dominant_species"],
+            },
+        }
+
+
 class IngestionServiceTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -232,6 +278,39 @@ class IngestionServiceTests(unittest.TestCase):
         )
         self.assertEqual(batch["status"], "ready")
         self.assertEqual(batch["observation_review"]["reviewed_by"], "reviewer_two")
+
+    def test_machine_review_is_a_suggestion_until_a_human_saves_it(self):
+        self.service.machine_reviewer = FakeMachineReviewer()
+        batch = self.service.create_batch(
+            "4",
+            "2026-10-16",
+            "",
+            [("wide.jpg", image_bytes((50, 90, 50)))],
+        )
+
+        with self.assertRaisesRegex(IngestionError, "photo-role review"):
+            self.service.generate_machine_observation_review(batch["batch_id"])
+
+        batch = self.service.accept_explicit_suggestions(batch["batch_id"])
+        suggestion = self.service.generate_machine_observation_review(batch["batch_id"])
+        self.assertEqual(suggestion["draft"]["values"]["bare_ground_pct"], 28)
+
+        batch = self.service.get_batch(batch["batch_id"])
+        self.assertIsNone(batch["observation_review"])
+        self.assertEqual(batch["latest_machine_review"]["model"], "test_vision_v1")
+        self.assertEqual(batch["observation_review_events"][-1]["actor_type"], "model")
+        self.assertEqual(batch["observation_review_events"][-1]["action"], "suggested")
+
+        edited = dict(suggestion["draft"]["values"])
+        edited["estimated_total_vegetation_cover_pct"] = 65
+        edited["completion_status"] = "reviewed"
+        batch = self.service.save_observation_review(batch["batch_id"], edited)
+        self.assertEqual(
+            batch["observation_review"]["estimated_total_vegetation_cover_pct"], 65
+        )
+        self.assertEqual(batch["observation_review_events"][-1]["actor_type"], "human")
+        machine_values = batch["latest_machine_review"]["draft"]["values"]
+        self.assertEqual(machine_values["estimated_total_vegetation_cover_pct"], 62)
 
     def test_duplicate_upload_is_counted_and_not_staged_twice(self):
         first = image_bytes((10, 20, 30)).getvalue()
