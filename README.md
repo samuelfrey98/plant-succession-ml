@@ -83,7 +83,7 @@ state; deploying the upload workflow safely therefore requires paid Render compu
 
 ![Site 1 cover estimates across six monitoring rounds](outputs/figures/site_01_cover_over_time.png)
 
-Site 1 now has six reviewed observations spanning May 25 through July 20. The photo-backed estimates
+Site 1 has six historical observations spanning May 25 through July 20. The photo-backed estimates
 show two substantial decreases in live vegetation cover followed by recovery. Separate field notes record
 mowing during the monitored period, with bounded event windows retained in the disturbance table. Missing
 observation values remain explicit when the photos do not support a defensible estimate.
