@@ -8,15 +8,17 @@ This directory separates public sample data from private or raw project data.
 - `raw/`: private source exports and Drive inventories; ignored by Git
 - `processed/`: processed private outputs; ignored by Git
 
-The public photo manifest intentionally omits Drive IDs and private links. Its 505 photo roles have
+The public photo manifest intentionally omits Drive IDs and private links. Its 596 photo roles have
 been visually reviewed; camera sequence alone is not treated as evidence of photo type. Re-running
 `scripts/build_photo_manifest.py` preserves populated visual-review fields by stable `photo_id` while
 refreshing source-derived metadata.
 
 `public/observations.csv` contains one deterministic observation per non-empty site/date photo batch.
-All 63 batches have been visually reviewed, and missing values remain explicit when the archive does
-not support a defensible estimate. Re-running `scripts/build_observation_backfill.py` preserves
-populated review fields.
+All 75 records are currently marked `partially_reviewed`: their supported fields are retained, while
+missing or uncertain historical values remain explicit. The 63 Drive-archive observations include
+assistant-generated visual estimates; the 12 ingestion-app observations remain open for further
+human or machine review. Re-running `scripts/build_observation_backfill.py` preserves populated
+review fields.
 
 `public/field_notes.csv` preserves the source wording and scope of field notes. `public/site_checks.csv`
 records only site-specific assessments explicitly supported by those notes. A site omitted from a note
@@ -27,9 +29,13 @@ remains unknown rather than being converted to a negative disturbance observatio
 sequence, elapsed-time, cover-change, and completeness fields without filling in missing ecological
 values.
 
-The private Google Sheets workbook `Plant Succession ML - Data Review` is the editable review surface.
-The CSVs in `public/` are the reviewed, sanitized snapshots that belong under version control. Keep the
-two representations synchronized by observation or photo batch, and never copy private Drive links or
-exact coordinates into the public files.
+The private Google Sheets workbook `Plant Succession ML - Data Review` is an editable mirror of the
+local review data. The CSVs in `public/` are the sanitized snapshots that belong under version control,
+and `ingestion.sqlite` is the local workflow database. Keep the representations synchronized by stable
+observation and photo IDs, and never copy private Drive links or exact coordinates into public files.
+
+`scripts/import_legacy_archive_to_ingestion.py` performs the one-time Drive-archive registration used
+by the local review app. It hard-links mirrored originals into ingestion batches, creates previews, and
+records historical assistant and unknown pre-tracking provenance without duplicating reviewer identity.
 
 Do not commit raw field photos, exact private coordinates, credentials, or full Drive exports unless they have been intentionally sanitized for public release.
