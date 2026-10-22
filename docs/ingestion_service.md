@@ -53,6 +53,9 @@ schema + referential validation
       |
       v
 atomic CSV publication + private photo archive
+      |
+      v
+publication-run lineage + optional Google Sheets mirror
 ```
 
 ## Storage Boundaries
@@ -73,6 +76,16 @@ export PLANT_SITE_ANCHORS="$HOME/PlantSuccession/site_anchors.csv"
 ```
 
 The service never exposes Drive IDs, private links, or exact coordinates in the public manifest.
+
+## Published Data And Pipeline Runs
+
+The app's **Published data** view is a read-only catalog over the validated CSV snapshot. It shows
+observation and photo counts, downloadable data products, current observation rows, and publication-run
+lineage. Each new publication records validation state, row counts, output SHA-256 checksums, the number
+of newly archived photos, timestamps, and any failure message in SQLite.
+
+Publication runs and destination-sync attempts are append-only operational records. Historical batches
+published before this feature remain visible in the data tables but do not acquire invented run history.
 
 ## Site And Date Suggestions
 
@@ -227,11 +240,33 @@ A batch cannot publish while any photo is unresolved or its observation review i
 The service is idempotent for an unchanged published batch, supports observation-metadata revisions without
 duplicating photos, and detects repeat files by content hash.
 
+## Optional Google Sheets Mirror
+
+Google Sheets is an output destination, not the canonical database. A successful local publication remains
+valid if Sheets is unavailable; the failed sync attempt is retained in SQLite and can be retried from the
+**Published data** view.
+
+Create a Google Cloud service account with Sheets API access, share the target workbook with its service
+account email, and configure the application before launch:
+
+```bash
+export PLANT_GOOGLE_SHEETS_ID="spreadsheet-id-from-the-workbook-url"
+export GOOGLE_APPLICATION_CREDENTIALS="$HOME/.config/plant-succession/google-service-account.json"
+```
+
+For hosted environments that store credentials as an environment secret instead of a file, set
+`PLANT_GOOGLE_SERVICE_ACCOUNT_JSON` to the complete service-account JSON. Never commit that JSON. The sync
+replaces the contents of the managed workbook tabs with the latest validated CSV snapshots so stale rows
+cannot survive a refresh.
+
 ## API Surface
 
 FastAPI publishes interactive API documentation at `http://127.0.0.1:8765/docs`.
 
 - `POST /api/batches`: stage one site/date upload batch
+- `GET /api/published-data`: retrieve the published catalog, lineage, and destination status
+- `GET /api/exports/{filename}`: download one validated public CSV
+- `POST /api/publication-runs/{run_id}/sync/google-sheets`: retry a Sheets mirror
 - `POST /api/upload-suggestions`: cache photos and return EXIF-derived site/date suggestions
 - `POST /api/batches/from-suggestion`: confirm site/date and stage an already cached upload
 - `GET /api/batches/{batch_id}`: retrieve candidates and review state

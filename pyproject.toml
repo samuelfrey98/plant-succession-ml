@@ -5,6 +5,8 @@ description = "Field-data infrastructure for plant succession and disturbance-re
 requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.115",
+  "google-api-python-client>=2.160",
+  "google-auth>=2.38",
   "pandas>=2.2",
   "matplotlib>=3.8",
   "openai>=2.0",

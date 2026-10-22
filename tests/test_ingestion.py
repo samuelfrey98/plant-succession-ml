@@ -26,6 +26,7 @@ from plant_succession.ingestion import (  # noqa: E402
     infer_photo_type,
     suggest_batch_metadata,
 )
+from plant_succession.google_sheets import GoogleSheetsSyncError  # noqa: E402
 from plant_succession.app import initialize_public_data, valid_basic_auth  # noqa: E402
 from plant_succession.validate import validate_public_photo_data  # noqa: E402
 
@@ -93,6 +94,32 @@ class FakeMachineReviewer:
                 ],
                 "overall_summary": f"Machine draft for {observation_date}.",
                 "review_priority_fields": ["dominant_species"],
+            },
+        }
+
+
+class FakeSheetsPublisher:
+    def __init__(self, fail: bool = False):
+        self.fail = fail
+        self.calls = 0
+
+    def configuration(self) -> dict[str, object]:
+        return {
+            "available": True,
+            "destination": "google_sheets",
+            "spreadsheet_url": "https://docs.google.com/spreadsheets/d/test-sheet",
+            "reason": "",
+        }
+
+    def sync(self, public_dir: Path) -> dict[str, object]:
+        self.calls += 1
+        if self.fail:
+            raise GoogleSheetsSyncError("Test destination unavailable.")
+        return {
+            "destination": "google_sheets",
+            "spreadsheet_url": "https://docs.google.com/spreadsheets/d/test-sheet",
+            "row_counts": {
+                "observations.csv": len(csv_rows(public_dir / "observations.csv")),
             },
         }
 
@@ -242,6 +269,53 @@ class IngestionServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(IngestionError, "Photo roles"):
             self.service.publish_batch(batch["batch_id"])
         self.assertEqual(before, (self.public_dir / "photo_manifest.csv").read_bytes())
+
+    def test_publication_run_and_sheet_sync_are_visible(self):
+        publisher = FakeSheetsPublisher()
+        self.service.sheets_publisher = publisher
+        batch = self.service.create_batch(
+            "2", "2026-10-17", "", [("wide.jpg", image_bytes((30, 80, 40)))]
+        )
+        batch = self.service.accept_explicit_suggestions(batch["batch_id"])
+        batch = self.service.save_observation_review(
+            batch["batch_id"],
+            {"notes": "Visible herb cover.", "completion_status": "reviewed"},
+            finalize=True,
+        )
+
+        batch = self.service.publish_batch(batch["batch_id"])
+        published = self.service.published_data()
+
+        self.assertEqual(batch["status"], "published")
+        self.assertEqual(publisher.calls, 1)
+        self.assertEqual(published["summary"]["publication_run_count"], 1)
+        run = published["publication_runs"][0]
+        self.assertEqual(run["status"], "succeeded")
+        self.assertEqual(run["validation_status"], "passed")
+        self.assertEqual(run["latest_sync"]["status"], "succeeded")
+        self.assertEqual(run["photo_rows_written"], 1)
+        self.assertIn("observations.csv", run["output_sha256"])
+
+    def test_sheet_sync_failure_does_not_rollback_local_publication(self):
+        publisher = FakeSheetsPublisher(fail=True)
+        self.service.sheets_publisher = publisher
+        batch = self.service.create_batch(
+            "2", "2026-10-18", "", [("wide.jpg", image_bytes((30, 80, 40)))]
+        )
+        batch = self.service.accept_explicit_suggestions(batch["batch_id"])
+        batch = self.service.save_observation_review(
+            batch["batch_id"],
+            {"notes": "Visible herb cover.", "completion_status": "reviewed"},
+            finalize=True,
+        )
+
+        batch = self.service.publish_batch(batch["batch_id"])
+        run = self.service.published_data()["publication_runs"][0]
+
+        self.assertEqual(batch["status"], "published")
+        self.assertEqual(run["status"], "succeeded")
+        self.assertEqual(run["latest_sync"]["status"], "failed")
+        self.assertIn("unavailable", run["latest_sync"]["error_message"])
 
     def test_observation_review_validates_ranges_and_partial_completion(self):
         batch = self.service.create_batch(

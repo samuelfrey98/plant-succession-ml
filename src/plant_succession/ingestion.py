@@ -24,6 +24,7 @@ from typing import BinaryIO, Iterable, Iterator
 from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 
+from plant_succession.google_sheets import GoogleSheetsSyncError, SheetsPublisher
 from plant_succession.machine_review import MachineReviewError, MachineReviewProvider
 from plant_succession.validate import validate_public_photo_data
 
@@ -548,10 +549,12 @@ class IngestionService:
         paths: IngestionPaths,
         max_file_bytes: int = MAX_FILE_BYTES,
         machine_reviewer: MachineReviewProvider | None = None,
+        sheets_publisher: SheetsPublisher | None = None,
     ):
         self.paths = paths
         self.max_file_bytes = max_file_bytes
         self.machine_reviewer = machine_reviewer
+        self.sheets_publisher = sheets_publisher
         self._publish_lock = threading.Lock()
         self.paths.state_dir.mkdir(parents=True, exist_ok=True)
         self.paths.batch_dir.mkdir(parents=True, exist_ok=True)
@@ -704,6 +707,37 @@ class IngestionService:
 
                 CREATE INDEX IF NOT EXISTS observation_review_events_batch_id_idx
                 ON observation_review_events(batch_id, created_at);
+
+                CREATE TABLE IF NOT EXISTS publication_runs (
+                    run_id TEXT PRIMARY KEY,
+                    batch_id TEXT NOT NULL REFERENCES batches(batch_id) ON DELETE CASCADE,
+                    observation_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    validation_status TEXT NOT NULL,
+                    photo_rows_written INTEGER NOT NULL DEFAULT 0,
+                    output_row_counts_json TEXT NOT NULL DEFAULT '{}',
+                    output_sha256_json TEXT NOT NULL DEFAULT '{}',
+                    error_message TEXT NOT NULL DEFAULT '',
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS publication_runs_batch_id_idx
+                ON publication_runs(batch_id, started_at);
+
+                CREATE TABLE IF NOT EXISTS destination_sync_attempts (
+                    sync_attempt_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL REFERENCES publication_runs(run_id) ON DELETE CASCADE,
+                    destination TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    result_json TEXT NOT NULL DEFAULT '{}',
+                    error_message TEXT NOT NULL DEFAULT '',
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS destination_sync_attempts_run_id_idx
+                ON destination_sync_attempts(run_id, started_at);
                 """
             )
             connection.execute(
@@ -715,6 +749,28 @@ class IngestionService:
                       SELECT 1 FROM observation_reviews review
                       WHERE review.batch_id = batches.batch_id AND review.is_final = 1
                   )
+                """
+            )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO publication_runs (
+                    run_id, batch_id, observation_id, status, validation_status,
+                    photo_rows_written, started_at, completed_at
+                )
+                SELECT
+                    'legacy_' || batch_id,
+                    batch_id,
+                    printf(
+                        'site_%02d_%s', CAST(site_id AS INTEGER),
+                        replace(observation_date, '-', '_')
+                    ),
+                    'legacy',
+                    'not_recorded',
+                    0,
+                    COALESCE(published_at, created_at),
+                    published_at
+                FROM batches
+                WHERE status = 'published'
                 """
             )
 
@@ -1151,6 +1207,132 @@ class IngestionService:
                 """
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def google_sheets_configuration(self) -> dict[str, object]:
+        if self.sheets_publisher is None:
+            return {
+                "available": False,
+                "destination": "google_sheets",
+                "spreadsheet_url": "",
+                "reason": "No Google Sheets destination is configured.",
+            }
+        return self.sheets_publisher.configuration()
+
+    def published_data(self) -> dict[str, object]:
+        _, observations = read_csv(self.paths.public_dir / "observations.csv")
+        _, manifest = read_csv(self.paths.public_dir / "photo_manifest.csv")
+        observations.sort(
+            key=lambda row: (row.get("observation_date", ""), row.get("site_id", "")),
+            reverse=True,
+        )
+        with self._connection() as connection:
+            run_rows = connection.execute(
+                "SELECT * FROM publication_runs ORDER BY started_at DESC"
+            ).fetchall()
+            published_at = connection.execute(
+                "SELECT MAX(published_at) AS value FROM batches"
+            ).fetchone()["value"]
+            runs: list[dict[str, object]] = []
+            for row in run_rows:
+                run = dict(row)
+                for field in ("output_row_counts_json", "output_sha256_json"):
+                    try:
+                        run[field.removesuffix("_json")] = json.loads(str(run.pop(field)))
+                    except json.JSONDecodeError:
+                        run[field.removesuffix("_json")] = {}
+                latest_sync = connection.execute(
+                    """
+                    SELECT * FROM destination_sync_attempts
+                    WHERE run_id = ? ORDER BY started_at DESC LIMIT 1
+                    """,
+                    (run["run_id"],),
+                ).fetchone()
+                if latest_sync is None:
+                    run["latest_sync"] = None
+                else:
+                    sync = dict(latest_sync)
+                    try:
+                        sync["result"] = json.loads(str(sync.pop("result_json")))
+                    except json.JSONDecodeError:
+                        sync["result"] = {}
+                    run["latest_sync"] = sync
+                runs.append(run)
+        return {
+            "summary": {
+                "observation_count": len(observations),
+                "photo_count": len(manifest),
+                "publication_run_count": len(runs),
+                "last_published_at": published_at or "",
+            },
+            "observations": observations,
+            "publication_runs": runs,
+            "google_sheets": self.google_sheets_configuration(),
+            "exports": [
+                path.name for path in sorted(self.paths.public_dir.glob("*.csv"))
+            ],
+        }
+
+    def sync_google_sheets(self, run_id: str | None = None) -> dict[str, object]:
+        config = self.google_sheets_configuration()
+        if not config["available"] or self.sheets_publisher is None:
+            raise IngestionError(str(config["reason"]))
+        with self._connection() as connection:
+            if run_id:
+                run = connection.execute(
+                    "SELECT * FROM publication_runs WHERE run_id = ?", (run_id,)
+                ).fetchone()
+            else:
+                run = connection.execute(
+                    """
+                    SELECT * FROM publication_runs
+                    WHERE status IN ('succeeded', 'legacy')
+                    ORDER BY completed_at DESC LIMIT 1
+                    """
+                ).fetchone()
+            if run is None or run["status"] not in {"succeeded", "legacy"}:
+                raise IngestionError("Choose a successful publication run before syncing.")
+            sync_attempt_id = f"sync_{uuid.uuid4().hex}"
+            started_at = utc_now()
+            connection.execute(
+                """
+                INSERT INTO destination_sync_attempts (
+                    sync_attempt_id, run_id, destination, status, started_at
+                ) VALUES (?, ?, 'google_sheets', 'running', ?)
+                """,
+                (sync_attempt_id, run["run_id"], started_at),
+            )
+        try:
+            result = self.sheets_publisher.sync(self.paths.public_dir)
+        except GoogleSheetsSyncError as error:
+            with self._connection() as connection:
+                connection.execute(
+                    """
+                    UPDATE destination_sync_attempts
+                    SET status = 'failed', error_message = ?, completed_at = ?
+                    WHERE sync_attempt_id = ?
+                    """,
+                    (str(error), utc_now(), sync_attempt_id),
+                )
+            raise IngestionError(str(error)) from error
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE destination_sync_attempts
+                SET status = 'succeeded', result_json = ?, completed_at = ?
+                WHERE sync_attempt_id = ?
+                """,
+                (
+                    json.dumps(result, sort_keys=True, separators=(",", ":")),
+                    utc_now(),
+                    sync_attempt_id,
+                ),
+            )
+        return {
+            "sync_attempt_id": sync_attempt_id,
+            "run_id": run["run_id"],
+            "status": "succeeded",
+            **result,
+        }
 
     def _record_batch_integrity(
         self,
@@ -1784,7 +1966,21 @@ class IngestionService:
                     "Photo roles and the observation review must be complete before publication."
                 )
 
+            run_id = f"publication_{uuid.uuid4().hex}"
+            obs_id = observation_id(str(batch["site_id"]), str(batch["observation_date"]))
+            with self._connection() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO publication_runs (
+                        run_id, batch_id, observation_id, status,
+                        validation_status, started_at
+                    ) VALUES (?, ?, ?, 'running', 'pending', ?)
+                    """,
+                    (run_id, batch_id, obs_id, utc_now()),
+                )
+
             copied_paths: list[Path] = []
+            new_manifest_rows: list[dict[str, object]] = []
             try:
                 manifest_fields, manifest_rows = read_csv(
                     self.paths.public_dir / "photo_manifest.csv"
@@ -1799,8 +1995,6 @@ class IngestionService:
                 known_photo_ids = {row["photo_id"] for row in manifest_rows}
                 site_id = str(batch["site_id"])
                 observed_on = str(batch["observation_date"])
-                obs_id = observation_id(site_id, observed_on)
-                new_manifest_rows: list[dict[str, object]] = []
                 for photo in batch["photos"]:
                     if photo["photo_id"] in known_photo_ids:
                         continue
@@ -1892,9 +2086,25 @@ class IngestionService:
                     summary_fields,
                     summary_rows,
                 )
-            except Exception:
+                output_row_counts: dict[str, int] = {}
+                output_sha256: dict[str, str] = {}
+                for path in sorted(self.paths.public_dir.glob("*.csv")):
+                    _, rows = read_csv(path)
+                    output_row_counts[path.name] = len(rows)
+                    output_sha256[path.name] = self._sha256(path)
+            except Exception as error:
                 for path in copied_paths:
                     path.unlink(missing_ok=True)
+                with self._connection() as connection:
+                    connection.execute(
+                        """
+                        UPDATE publication_runs
+                        SET status = 'failed', validation_status = 'failed',
+                            error_message = ?, completed_at = ?
+                        WHERE run_id = ?
+                        """,
+                        (str(error), utc_now(), run_id),
+                    )
                 raise
 
             with self._connection() as connection:
@@ -1902,6 +2112,28 @@ class IngestionService:
                     "UPDATE batches SET status = 'published', published_at = ? WHERE batch_id = ?",
                     (utc_now(), batch_id),
                 )
+                connection.execute(
+                    """
+                    UPDATE publication_runs
+                    SET status = 'succeeded', validation_status = 'passed',
+                        photo_rows_written = ?, output_row_counts_json = ?,
+                        output_sha256_json = ?, completed_at = ?
+                    WHERE run_id = ?
+                    """,
+                    (
+                        len(new_manifest_rows),
+                        json.dumps(output_row_counts, sort_keys=True, separators=(",", ":")),
+                        json.dumps(output_sha256, sort_keys=True, separators=(",", ":")),
+                        utc_now(),
+                        run_id,
+                    ),
+                )
+            if self.google_sheets_configuration()["available"]:
+                try:
+                    self.sync_google_sheets(run_id)
+                except IngestionError:
+                    # The durable local publication succeeded; the failed sink is retryable.
+                    pass
             return self.get_batch(batch_id)
 
     @staticmethod

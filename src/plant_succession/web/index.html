@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Review queue for Plant Succession field-photo ingestion.">
     <title>Plant Succession Ingest</title>
-    <link rel="stylesheet" href="/assets/styles.css?v=20261018-2">
+    <link rel="stylesheet" href="/assets/styles.css?v=20261021-1">
     <script defer src="/assets/lucide.min.js"></script>
-    <script defer src="/assets/app.js?v=20261018-2"></script>
+    <script defer src="/assets/app.js?v=20261021-1"></script>
   </head>
   <body>
     <header class="app-header">
@@ -16,13 +16,23 @@
         <h1>Plant Succession Ingest</h1>
         <p>Stage, review, and publish field-photo batches</p>
       </div>
+      <nav class="app-nav" aria-label="Application sections">
+        <button class="app-nav-button active" data-app-view="ingestion" type="button">
+          <i data-lucide="inbox" aria-hidden="true"></i>
+          Ingestion
+        </button>
+        <button class="app-nav-button" data-app-view="published" type="button">
+          <i data-lucide="table-properties" aria-hidden="true"></i>
+          Published data
+        </button>
+      </nav>
       <div class="service-state" id="service-state">
         <span class="status-dot"></span>
         Service online
       </div>
     </header>
 
-    <main class="shell">
+    <main class="shell" id="ingestion-shell">
       <aside class="upload-panel">
         <div class="section-heading">
           <div>
@@ -268,6 +278,75 @@
             </form>
           </section>
         </section>
+      </section>
+    </main>
+
+    <main class="data-shell hidden" id="published-shell">
+      <section class="data-header">
+        <div>
+          <p class="eyebrow">Validated outputs</p>
+          <h2>Published data</h2>
+          <p>Read-only snapshots produced by successful ingestion runs.</p>
+        </div>
+        <div class="data-actions">
+          <button class="secondary-button" id="refresh-published-button" type="button" title="Reload published data">
+            <i data-lucide="refresh-cw" aria-hidden="true"></i>
+            Refresh
+          </button>
+          <button class="primary-button" id="sync-sheets-button" type="button" disabled>
+            <i data-lucide="sheet" aria-hidden="true"></i>
+            Sync to Google Sheets
+          </button>
+        </div>
+      </section>
+
+      <section class="data-metrics" aria-label="Published data summary">
+        <div><span>Observations</span><strong id="data-observation-count">0</strong></div>
+        <div><span>Photos</span><strong id="data-photo-count">0</strong></div>
+        <div><span>Tracked runs</span><strong id="data-run-count">0</strong></div>
+        <div><span>Sheets mirror</span><strong id="data-sheets-state">Off</strong></div>
+      </section>
+
+      <section class="data-band" aria-labelledby="exports-title">
+        <div class="data-band-heading">
+          <div>
+            <p class="eyebrow">Data products</p>
+            <h3 id="exports-title">Validated CSV exports</h3>
+          </div>
+          <p id="data-published-at"></p>
+        </div>
+        <div class="export-list" id="export-list"></div>
+      </section>
+
+      <section class="data-band" aria-labelledby="observations-title">
+        <div class="data-band-heading">
+          <div>
+            <p class="eyebrow">Current snapshot</p>
+            <h3 id="observations-title">Observations</h3>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>Date</th><th>Site</th><th>Review</th><th>Photos</th><th>Vegetation</th><th>Dominant taxon</th><th>Origin</th></tr></thead>
+            <tbody id="published-observations"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="data-band" aria-labelledby="runs-title">
+        <div class="data-band-heading">
+          <div>
+            <p class="eyebrow">Lineage</p>
+            <h3 id="runs-title">Pipeline runs</h3>
+          </div>
+          <p id="sheets-config-note"></p>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>Completed</th><th>Observation</th><th>Publication</th><th>Validation</th><th>Photos added</th><th>Google Sheets</th></tr></thead>
+            <tbody id="publication-runs"></tbody>
+          </table>
+        </div>
       </section>
     </main>
 
