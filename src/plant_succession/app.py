@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from plant_succession.google_sheets import GoogleSheetsPublisher
 from plant_succession.ingestion import IngestionError, IngestionPaths, IngestionService
 from plant_succession.machine_review import OpenAIMachineReviewer
 
@@ -74,6 +75,7 @@ def build_service() -> IngestionService:
             site_anchor_file=site_anchor_file,
         ),
         machine_reviewer=OpenAIMachineReviewer(),
+        sheets_publisher=GoogleSheetsPublisher(),
     )
 
 
@@ -159,6 +161,28 @@ def sites() -> list[dict[str, str]]:
 @app.get("/api/dashboard")
 def dashboard() -> dict[str, object]:
     return service.dashboard()
+
+
+@app.get("/api/published-data")
+def published_data() -> dict[str, object]:
+    return service.published_data()
+
+
+@app.get("/api/exports/{filename}")
+def public_export(filename: str) -> FileResponse:
+    available = {path.name: path for path in service.paths.public_dir.glob("*.csv")}
+    path = available.get(filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Unknown public data export.")
+    return FileResponse(path, media_type="text/csv", filename=filename)
+
+
+@app.post("/api/publication-runs/{run_id}/sync/google-sheets")
+def sync_google_sheets(run_id: str) -> dict[str, object]:
+    try:
+        return service.sync_google_sheets(run_id)
+    except IngestionError as error:
+        raise bad_request(error) from error
 
 
 @app.get("/api/machine-review/config")

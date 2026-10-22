@@ -1,6 +1,9 @@
 pandas>=2.2
 matplotlib>=3.8
 fastapi>=0.115
+google-api-python-client>=2.160
+google-auth>=2.38
+openai>=2.0
 pillow>=11.1
 pillow-heif>=0.20
 python-multipart>=0.0.18

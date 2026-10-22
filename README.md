@@ -23,15 +23,17 @@ Current implemented assets:
 - Append-only review events that keep rule/model suggestions separate from human verification
 - A batch-level observation review stage for cover estimates, uncertainty-aware taxon labels, and explicit completeness
 - Optional vision-model drafts with per-field confidence, evidence, and human approval before publication
+- A read-only published-data catalog with CSV downloads and append-only publication-run lineage
+- An optional retryable Google Sheets mirror that cannot roll back a valid local publication
 - A structured Google Form for site observations
-- A Google Sheets workbook with review, source-note, site-check, and disturbance-event tables
+- A private Google Sheets workbook used during the historical review and backfill
 - Repeatable photo protocols for wide, quadrat, close-up, and context photos
 - Initial schema design for ecological observations and disturbance history
 - A sanitized 596-row photo manifest with deterministic IDs and logical archive paths
 - A 75-row observation table derived from photo-backed site visits, with explicit provenance
 - A 75-row upload-batch summary used to audit completeness independently of observation content
 - Validation for identifiers, site references, dates, counts, classification state, and private-link leakage
-- A private Google Sheets review workbook synchronized with the public CSV structure
+- A private Google Sheets review workbook retained as a historical editing surface
 - Completed photo-role reviews for Sites 1-11, with 596 verified roles; 63 historical observations also have uncertainty-aware cover estimates
 - 11 preserved field notes normalized into 16 explicit site checks and 15 disturbance events
 - Source-note lineage that keeps unmentioned sites unknown and separates phenology from disturbance
@@ -59,6 +61,11 @@ The Observation tab can optionally send optimized previews to a configured visio
 first pass. Its suggestions fill an editable form and are retained as separate audit events; they do not
 become canonical data until a human saves the review. This is general-purpose model assistance, not a
 custom-trained ecological classifier or expert taxonomic verification.
+
+The **Published data** view exposes the current validated snapshot, downloadable CSV products, and pipeline
+run history without requiring direct SQLite access. Google Sheets can be configured as a one-way mirror;
+SQLite and validated CSVs remain the source of truth, and a Sheets failure is recorded for retry rather than
+invalidating publication.
 
 ![Plant Succession local ingestion queue](docs/screenshots/ingestion_app.png)
 
@@ -153,8 +160,9 @@ images do not support dating the earlier soil displacement or inferring a discre
 ## Review Workflow
 
 The repository CSVs are the versioned, sanitized public record. A private Google Sheets workbook named
-`Plant Succession ML - Data Review` mirrors those tables so photo-backed observations can be reviewed
-and corrected without exposing Drive links or exact coordinates in GitHub.
+`Plant Succession ML - Data Review` was used for the historical review and remains available as a convenient
+reference. New ingestion-app publications do not update it unless the optional one-way Sheets mirror is
+configured.
 
 Reviews are completed one site/date batch at a time. Photo roles are assigned only after visual
 inspection, ecological values are recorded as rounded post-hoc estimates when the images support them,

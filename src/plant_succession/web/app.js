@@ -10,6 +10,9 @@ const state = {
   reviewView: "photos",
   machineReviewConfig: null,
   machineReviewLoading: false,
+  appView: "ingestion",
+  publishedData: null,
+  publishedLoading: false,
 };
 
 const photoTypes = [
@@ -66,6 +69,139 @@ function statusLabel(status) {
     failed: "Failed",
     staged: "Staging",
   }[status] || status;
+}
+
+function formatDateTime(value) {
+  if (!value) return "Not yet";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
+function publicationStatus(status) {
+  return {
+    succeeded: "Succeeded",
+    failed: "Failed",
+    running: "Running",
+    legacy: "Pre-tracking",
+    passed: "Passed",
+    not_recorded: "Not recorded",
+  }[status] || status || "Not recorded";
+}
+
+function exportLabel(filename) {
+  return filename
+    .replace(/\.csv$/, "")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function setAppView(view) {
+  state.appView = view;
+  document.querySelector("#ingestion-shell").classList.toggle("hidden", view !== "ingestion");
+  document.querySelector("#published-shell").classList.toggle("hidden", view !== "published");
+  document.querySelectorAll(".app-nav-button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.appView === view);
+  });
+  if (view === "published") loadPublishedData();
+  iconRefresh();
+}
+
+async function loadPublishedData() {
+  if (state.publishedLoading) return;
+  state.publishedLoading = true;
+  const refresh = document.querySelector("#refresh-published-button");
+  refresh.disabled = true;
+  try {
+    state.publishedData = await api("/api/published-data");
+    renderPublishedData();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    state.publishedLoading = false;
+    refresh.disabled = false;
+    iconRefresh();
+  }
+}
+
+function renderPublishedData() {
+  const data = state.publishedData;
+  if (!data) return;
+  const summary = data.summary || {};
+  const sheets = data.google_sheets || {};
+  document.querySelector("#data-observation-count").textContent = summary.observation_count || 0;
+  document.querySelector("#data-photo-count").textContent = summary.photo_count || 0;
+  document.querySelector("#data-run-count").textContent = summary.publication_run_count || 0;
+  document.querySelector("#data-published-at").textContent = summary.last_published_at
+    ? `Last published ${formatDateTime(summary.last_published_at)}`
+    : "No local publication timestamp";
+
+  const syncButton = document.querySelector("#sync-sheets-button");
+  const latestRun = (data.publication_runs || []).find((run) => ["succeeded", "legacy"].includes(run.status));
+  syncButton.disabled = !sheets.available || !latestRun;
+  syncButton.dataset.runId = latestRun?.run_id || "";
+  document.querySelector("#data-sheets-state").textContent = sheets.available ? "Ready" : "Off";
+  const sheetsNote = document.querySelector("#sheets-config-note");
+  if (sheets.available) {
+    sheetsNote.innerHTML = sheets.spreadsheet_url
+      ? `<a href="${escapeHtml(sheets.spreadsheet_url)}" target="_blank" rel="noreferrer">Open Google Sheets mirror</a>`
+      : "Google Sheets mirror configured";
+  } else {
+    sheetsNote.textContent = sheets.reason || "Google Sheets mirror is not configured.";
+  }
+
+  document.querySelector("#export-list").innerHTML = (data.exports || []).map((filename) => `
+    <a class="export-link" href="/api/exports/${encodeURIComponent(filename)}" download>
+      <i data-lucide="download" aria-hidden="true"></i>
+      <span><strong>${escapeHtml(exportLabel(filename))}</strong><small>${escapeHtml(filename)}</small></span>
+    </a>
+  `).join("") || '<p class="empty-state">No public exports found.</p>';
+
+  document.querySelector("#published-observations").innerHTML = (data.observations || []).map((row) => `
+    <tr>
+      <td>${escapeHtml(row.observation_date)}</td>
+      <td>${escapeHtml(siteLabel(row.site_id))}</td>
+      <td><span class="status-badge status-${row.review_status === "reviewed" ? "published" : "observation_review"}">${escapeHtml(row.review_status || "unknown")}</span></td>
+      <td>${escapeHtml(row.source_photo_count || "0")}</td>
+      <td>${row.estimated_total_vegetation_cover_pct !== "" ? `${escapeHtml(row.estimated_total_vegetation_cover_pct)}%` : "-"}</td>
+      <td>${escapeHtml(row.dominant_species || "-")}</td>
+      <td>${escapeHtml(row.record_origin || "-")}</td>
+    </tr>
+  `).join("") || '<tr><td colspan="7">No published observations.</td></tr>';
+
+  document.querySelector("#publication-runs").innerHTML = (data.publication_runs || []).map((run) => {
+    const sync = run.latest_sync;
+    const syncState = sync ? publicationStatus(sync.status) : (sheets.available ? "Not synced" : "Not configured");
+    return `
+      <tr>
+        <td>${escapeHtml(formatDateTime(run.completed_at || run.started_at))}</td>
+        <td>${escapeHtml(run.observation_id)}</td>
+        <td><span class="run-state run-${escapeHtml(run.status)}">${escapeHtml(publicationStatus(run.status))}</span></td>
+        <td>${escapeHtml(publicationStatus(run.validation_status))}</td>
+        <td>${escapeHtml(run.photo_rows_written)}</td>
+        <td>${escapeHtml(syncState)}${sync?.error_message ? `<small class="cell-note">${escapeHtml(sync.error_message)}</small>` : ""}</td>
+      </tr>`;
+  }).join("") || '<tr><td colspan="6">Older published data predates pipeline-run tracking.</td></tr>';
+  iconRefresh();
+}
+
+async function syncGoogleSheets() {
+  const button = document.querySelector("#sync-sheets-button");
+  const runId = button.dataset.runId;
+  if (!runId) return;
+  button.disabled = true;
+  button.innerHTML = '<i data-lucide="loader-circle" aria-hidden="true"></i> Syncing...';
+  iconRefresh();
+  try {
+    await api(`/api/publication-runs/${encodeURIComponent(runId)}/sync/google-sheets`, {method: "POST"});
+    await loadPublishedData();
+    showToast("Published data mirrored to Google Sheets.");
+  } catch (error) {
+    await loadPublishedData();
+    showToast(error.message, true);
+  } finally {
+    button.innerHTML = '<i data-lucide="file-spreadsheet" aria-hidden="true"></i> Sync to Google Sheets';
+    renderPublishedData();
+  }
 }
 
 async function loadSites() {
@@ -610,6 +746,7 @@ async function publishBatch() {
   try {
     state.selectedBatch = await api(`/api/batches/${encodeURIComponent(state.selectedBatch.batch_id)}/publish`, {method: "POST"});
     await loadDashboard();
+    if (state.publishedData) await loadPublishedData();
     renderReview();
     showToast("Validated metadata published to the public dataset.");
   } catch (error) {
@@ -652,6 +789,11 @@ async function initialize() {
   document.querySelector("#publish-button").addEventListener("click", publishBatch);
   document.querySelector("#machine-review-button").addEventListener("click", generateMachineReview);
   document.querySelector("#observation-review-form").addEventListener("submit", saveObservationReview);
+  document.querySelector("#refresh-published-button").addEventListener("click", loadPublishedData);
+  document.querySelector("#sync-sheets-button").addEventListener("click", syncGoogleSheets);
+  document.querySelectorAll(".app-nav-button").forEach((button) => button.addEventListener("click", () => {
+    setAppView(button.dataset.appView);
+  }));
   document.querySelectorAll(".review-tab").forEach((button) => button.addEventListener("click", () => {
     state.reviewView = button.dataset.reviewView;
     renderReviewView();
