@@ -14,7 +14,7 @@ import tempfile
 import threading
 import uuid
 from collections import Counter
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, closing, contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -24,6 +24,7 @@ from typing import BinaryIO, Iterable, Iterator
 from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 
+from plant_succession.analysis import write_analysis_ready_export
 from plant_succession.google_sheets import GoogleSheetsSyncError, SheetsPublisher
 from plant_succession.machine_review import MachineReviewError, MachineReviewProvider
 from plant_succession.validate import validate_public_photo_data
@@ -48,6 +49,8 @@ UPLOAD_TOKEN_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 MAX_SITE_MATCH_DISTANCE_METERS = 150.0
 UPLOAD_SUGGESTION_MAX_AGE_SECONDS = 24 * 60 * 60
 REVIEW_ACTOR_TYPES = {"human", "ai_assistant", "model", "rule", "legacy_unknown"}
+DATABASE_SCHEMA_VERSION = 4
+DERIVED_EXPORTS = {"analysis_ready_observations.csv"}
 OBSERVATION_PERCENT_FIELDS = (
     "estimated_total_vegetation_cover_pct",
     "bare_ground_pct",
@@ -519,23 +522,43 @@ def read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
         return list(reader.fieldnames or []), list(reader)
 
 
-def write_csv(path: Path, fields: list[str], rows: Iterable[dict[str, object]]) -> None:
+def write_csv(
+    path: Path,
+    fields: list[str],
+    rows: Iterable[dict[str, object]],
+    *,
+    line_terminator: str = "\r\n",
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=fields,
+            extrasaction="ignore",
+            lineterminator=line_terminator,
+        )
         writer.writeheader()
         writer.writerows(rows)
 
 
 def atomic_write_csv(
-    path: Path, fields: list[str], rows: Iterable[dict[str, object]]
+    path: Path,
+    fields: list[str],
+    rows: Iterable[dict[str, object]],
+    *,
+    line_terminator: str = "\r\n",
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         "w", newline="", encoding="utf-8", dir=path.parent, delete=False
     ) as handle:
         temporary = Path(handle.name)
-        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=fields,
+            extrasaction="ignore",
+            lineterminator=line_terminator,
+        )
         writer.writeheader()
         writer.writerows(rows)
     os.replace(temporary, path)
@@ -561,6 +584,7 @@ class IngestionService:
         self.paths.suggestion_dir.mkdir(parents=True, exist_ok=True)
         self.paths.archive_dir.mkdir(parents=True, exist_ok=True)
         self._initialize_database()
+        self._seed_canonical_store()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.paths.database)
@@ -579,6 +603,15 @@ class IngestionService:
 
     def _initialize_database(self) -> None:
         with self._connection() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    applied_at TEXT NOT NULL
+                )
+                """
+            )
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS batches (
@@ -742,6 +775,58 @@ class IngestionService:
             )
             connection.execute(
                 """
+                INSERT OR IGNORE INTO schema_migrations (version, name, applied_at)
+                VALUES (1, 'baseline_ingestion_schema', ?)
+                """,
+                (utc_now(),),
+            )
+            self._apply_migration(
+                connection,
+                2,
+                "canonical_public_dataset_store",
+                """
+                CREATE TABLE canonical_datasets (
+                    filename TEXT PRIMARY KEY,
+                    fields_json TEXT NOT NULL,
+                    row_count INTEGER NOT NULL,
+                    content_sha256 TEXT NOT NULL,
+                    imported_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE canonical_dataset_rows (
+                    filename TEXT NOT NULL
+                        REFERENCES canonical_datasets(filename) ON DELETE CASCADE,
+                    row_position INTEGER NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (filename, row_position)
+                );
+
+                CREATE INDEX canonical_dataset_rows_filename_idx
+                ON canonical_dataset_rows(filename, row_position);
+                """,
+            )
+            self._apply_migration(
+                connection,
+                3,
+                "preserve_export_line_endings",
+                """
+                ALTER TABLE canonical_datasets
+                ADD COLUMN line_terminator TEXT NOT NULL DEFAULT '\n';
+                """,
+            )
+            self._apply_migration(
+                connection,
+                4,
+                "separate_derived_analysis_export",
+                """
+                DELETE FROM canonical_datasets
+                WHERE filename = 'analysis_ready_observations.csv';
+                """,
+            )
+            connection.execute(
+                """
                 UPDATE batches
                 SET status = 'observation_review'
                 WHERE status = 'ready'
@@ -773,6 +858,310 @@ class IngestionService:
                 WHERE status = 'published'
                 """
             )
+
+    @staticmethod
+    def _apply_migration(
+        connection: sqlite3.Connection,
+        version: int,
+        name: str,
+        sql: str,
+    ) -> None:
+        applied = connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE version = ?", (version,)
+        ).fetchone()
+        if applied is not None:
+            return
+        connection.executescript(sql)
+        connection.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+            (version, name, utc_now()),
+        )
+
+    @staticmethod
+    def _normalize_dataset_rows(
+        fields: list[str], rows: Iterable[dict[str, object]]
+    ) -> list[dict[str, str]]:
+        return [
+            {
+                field: "" if row.get(field) is None else str(row.get(field, ""))
+                for field in fields
+            }
+            for row in rows
+        ]
+
+    @staticmethod
+    def _dataset_digest(fields: list[str], rows: list[dict[str, str]]) -> str:
+        payload = json.dumps(
+            {"fields": fields, "rows": rows},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    def _replace_canonical_dataset(
+        self,
+        connection: sqlite3.Connection,
+        filename: str,
+        fields: list[str],
+        rows: Iterable[dict[str, object]],
+        *,
+        imported_at: str | None = None,
+        line_terminator: str | None = None,
+    ) -> None:
+        normalized = self._normalize_dataset_rows(fields, rows)
+        now = utc_now()
+        existing = connection.execute(
+            """
+            SELECT imported_at, line_terminator
+            FROM canonical_datasets WHERE filename = ?
+            """,
+            (filename,),
+        ).fetchone()
+        first_imported_at = (
+            str(existing["imported_at"])
+            if existing is not None
+            else (imported_at or now)
+        )
+        export_line_terminator = (
+            str(existing["line_terminator"])
+            if existing is not None
+            else (line_terminator or "\n")
+        )
+        connection.execute("DELETE FROM canonical_datasets WHERE filename = ?", (filename,))
+        connection.execute(
+            """
+            INSERT INTO canonical_datasets (
+                filename, fields_json, row_count, content_sha256, line_terminator,
+                imported_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                filename,
+                json.dumps(fields, separators=(",", ":")),
+                len(normalized),
+                self._dataset_digest(fields, normalized),
+                export_line_terminator,
+                first_imported_at,
+                now,
+            ),
+        )
+        connection.executemany(
+            """
+            INSERT INTO canonical_dataset_rows (
+                filename, row_position, payload_json, updated_at
+            ) VALUES (?, ?, ?, ?)
+            """,
+            [
+                (
+                    filename,
+                    position,
+                    json.dumps(row, sort_keys=True, separators=(",", ":")),
+                    now,
+                )
+                for position, row in enumerate(normalized)
+            ],
+        )
+
+    @staticmethod
+    def _read_canonical_dataset(
+        connection: sqlite3.Connection, filename: str
+    ) -> tuple[list[str], list[dict[str, str]]]:
+        dataset = connection.execute(
+            "SELECT fields_json FROM canonical_datasets WHERE filename = ?", (filename,)
+        ).fetchone()
+        if dataset is None:
+            raise IngestionError(f"Canonical dataset '{filename}' is not initialized.")
+        fields = json.loads(str(dataset["fields_json"]))
+        rows = connection.execute(
+            """
+            SELECT payload_json FROM canonical_dataset_rows
+            WHERE filename = ? ORDER BY row_position
+            """,
+            (filename,),
+        ).fetchall()
+        return list(fields), [json.loads(str(row["payload_json"])) for row in rows]
+
+    def read_canonical_dataset(
+        self, filename: str
+    ) -> tuple[list[str], list[dict[str, str]]]:
+        with self._connection() as connection:
+            return self._read_canonical_dataset(connection, filename)
+
+    def _seed_canonical_store(self) -> None:
+        with self._connection() as connection:
+            count = connection.execute(
+                "SELECT COUNT(*) AS count FROM canonical_datasets"
+            ).fetchone()["count"]
+        if count:
+            return
+        self.import_public_exports(self.paths.public_dir, replace=False)
+
+    def import_public_exports(
+        self, source_dir: Path, *, replace: bool = False
+    ) -> dict[str, object]:
+        """Explicitly load validated CSV snapshots into the canonical SQLite store."""
+
+        source_dir = source_dir.expanduser().resolve()
+        csv_paths = sorted(
+            path for path in source_dir.glob("*.csv") if path.name not in DERIVED_EXPORTS
+        )
+        if not csv_paths:
+            raise IngestionError(f"No CSV exports were found in '{source_dir}'.")
+        issues = validate_public_photo_data(source_dir, self.paths.schema_dir)
+        if issues:
+            details = "; ".join(issue.format() for issue in issues[:8])
+            raise IngestionError(f"Import failed validation: {details}")
+        imported_at = utc_now()
+        with self._connection() as connection:
+            existing_count = connection.execute(
+                "SELECT COUNT(*) AS count FROM canonical_datasets"
+            ).fetchone()["count"]
+            if existing_count and not replace:
+                raise IngestionError(
+                    "The canonical store is already initialized; use replace=True explicitly."
+                )
+            if replace:
+                connection.execute("DELETE FROM canonical_datasets")
+            row_counts: dict[str, int] = {}
+            for path in csv_paths:
+                fields, rows = read_csv(path)
+                line_terminator = "\r\n" if b"\r\n" in path.read_bytes() else "\n"
+                self._replace_canonical_dataset(
+                    connection,
+                    path.name,
+                    fields,
+                    rows,
+                    imported_at=imported_at,
+                    line_terminator=line_terminator,
+                )
+                row_counts[path.name] = len(rows)
+        return {
+            "source_dir": str(source_dir),
+            "dataset_count": len(csv_paths),
+            "row_counts": row_counts,
+            "imported_at": imported_at,
+        }
+
+    def export_public_data(self, output_dir: Path | None = None) -> dict[str, object]:
+        """Materialize validated, deterministic CSV snapshots from canonical SQLite data."""
+
+        destination = (output_dir or self.paths.public_dir).expanduser().resolve()
+        with self._connection() as connection:
+            filenames = [
+                str(row["filename"])
+                for row in connection.execute(
+                    "SELECT filename FROM canonical_datasets ORDER BY filename"
+                ).fetchall()
+            ]
+            datasets = {}
+            for filename in filenames:
+                fields, rows = self._read_canonical_dataset(connection, filename)
+                line_terminator = connection.execute(
+                    """
+                    SELECT line_terminator FROM canonical_datasets
+                    WHERE filename = ?
+                    """,
+                    (filename,),
+                ).fetchone()["line_terminator"]
+                datasets[filename] = (fields, rows, str(line_terminator))
+        with tempfile.TemporaryDirectory(
+            prefix="canonical-export-", dir=self.paths.state_dir
+        ) as temporary:
+            candidate_dir = Path(temporary)
+            for filename, (fields, rows, line_terminator) in datasets.items():
+                write_csv(
+                    candidate_dir / filename,
+                    fields,
+                    rows,
+                    line_terminator=line_terminator,
+                )
+            write_analysis_ready_export(candidate_dir)
+            issues = validate_public_photo_data(candidate_dir, self.paths.schema_dir)
+            if issues:
+                details = "; ".join(issue.format() for issue in issues[:8])
+                raise IngestionError(f"Export failed validation: {details}")
+            destination.mkdir(parents=True, exist_ok=True)
+            row_counts: dict[str, int] = {}
+            output_sha256: dict[str, str] = {}
+            export_paths = sorted(candidate_dir.glob("*.csv"))
+            for source in export_paths:
+                filename = source.name
+                target = destination / filename
+                with source.open("rb") as input_handle:
+                    with tempfile.NamedTemporaryFile(
+                        "wb", dir=destination, delete=False
+                    ) as output_handle:
+                        shutil.copyfileobj(input_handle, output_handle)
+                        temporary_target = Path(output_handle.name)
+                os.replace(temporary_target, target)
+                _, rows = read_csv(source)
+                row_counts[filename] = len(rows)
+                output_sha256[filename] = self._sha256(target)
+        return {
+            "output_dir": str(destination),
+            "dataset_count": len(export_paths),
+            "canonical_dataset_count": len(datasets),
+            "row_counts": row_counts,
+            "output_sha256": output_sha256,
+            "exported_at": utc_now(),
+        }
+
+    def backup_database(self, output_dir: Path | None = None) -> dict[str, object]:
+        """Create a consistent online SQLite backup and checksum manifest."""
+
+        destination_dir = (output_dir or self.paths.state_dir / "backups").expanduser()
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        destination = destination_dir / f"ingestion-{timestamp}.sqlite"
+        with closing(self._connect()) as source, closing(
+            sqlite3.connect(destination)
+        ) as target:
+            source.backup(target)
+        with closing(sqlite3.connect(destination)) as backup:
+            integrity = backup.execute("PRAGMA integrity_check").fetchone()[0]
+            versions = [
+                row[0]
+                for row in backup.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                ).fetchall()
+            ]
+        if integrity != "ok":
+            destination.unlink(missing_ok=True)
+            raise IngestionError(f"SQLite backup integrity check failed: {integrity}")
+        manifest = {
+            "database": destination.name,
+            "created_at": utc_now(),
+            "sha256": self._sha256(destination),
+            "size_bytes": destination.stat().st_size,
+            "schema_versions": versions,
+        }
+        manifest_path = destination.with_suffix(".json")
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return {**manifest, "path": str(destination), "manifest": str(manifest_path)}
+
+    def canonical_store_status(self) -> dict[str, object]:
+        with self._connection() as connection:
+            migrations = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM schema_migrations ORDER BY version"
+                ).fetchall()
+            ]
+            datasets = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM canonical_datasets ORDER BY filename"
+                ).fetchall()
+            ]
+        return {
+            "database": str(self.paths.database),
+            "schema_version": migrations[-1]["version"] if migrations else 0,
+            "expected_schema_version": DATABASE_SCHEMA_VERSION,
+            "migrations": migrations,
+            "datasets": datasets,
+        }
 
     @staticmethod
     def _record_review_event(
@@ -810,7 +1199,7 @@ class IngestionService:
         )
 
     def list_sites(self) -> list[dict[str, str]]:
-        _, rows = read_csv(self.paths.public_dir / "site_registry.csv")
+        _, rows = self.read_canonical_dataset("site_registry.csv")
         return [
             {
                 "site_id": row["site_id"],
@@ -1437,8 +1826,9 @@ class IngestionService:
         return self.sheets_publisher.configuration()
 
     def published_data(self) -> dict[str, object]:
-        _, observations = read_csv(self.paths.public_dir / "observations.csv")
-        _, manifest = read_csv(self.paths.public_dir / "photo_manifest.csv")
+        _, observations = self.read_canonical_dataset("observations.csv")
+        _, manifest = self.read_canonical_dataset("photo_manifest.csv")
+        store = self.canonical_store_status()
         observations.sort(
             key=lambda row: (row.get("observation_date", ""), row.get("site_id", "")),
             reverse=True,
@@ -1486,8 +1876,13 @@ class IngestionService:
             "publication_runs": runs,
             "google_sheets": self.google_sheets_configuration(),
             "exports": [
-                path.name for path in sorted(self.paths.public_dir.glob("*.csv"))
+                *[dataset["filename"] for dataset in store["datasets"]],
+                *sorted(DERIVED_EXPORTS),
             ],
+            "canonical_store": {
+                "schema_version": store["schema_version"],
+                "dataset_count": len(store["datasets"]),
+            },
         }
 
     def sync_google_sheets(self, run_id: str | None = None) -> dict[str, object]:
@@ -1520,8 +1915,9 @@ class IngestionService:
                 (sync_attempt_id, run["run_id"], started_at),
             )
         try:
+            self.export_public_data()
             result = self.sheets_publisher.sync(self.paths.public_dir)
-        except GoogleSheetsSyncError as error:
+        except (GoogleSheetsSyncError, IngestionError) as error:
             with self._connection() as connection:
                 connection.execute(
                     """
@@ -1695,7 +2091,7 @@ class IngestionService:
             dict(observation_review) if observation_review is not None else None
         )
         if result["observation_review"] is None and result["status"] == "published":
-            _, observation_rows = read_csv(self.paths.public_dir / "observations.csv")
+            _, observation_rows = self.read_canonical_dataset("observations.csv")
             published_observation = next(
                 (
                     row
@@ -2200,14 +2596,14 @@ class IngestionService:
             copied_paths: list[Path] = []
             new_manifest_rows: list[dict[str, object]] = []
             try:
-                manifest_fields, manifest_rows = read_csv(
-                    self.paths.public_dir / "photo_manifest.csv"
+                manifest_fields, manifest_rows = self.read_canonical_dataset(
+                    "photo_manifest.csv"
                 )
-                observation_fields, observation_rows = read_csv(
-                    self.paths.public_dir / "observations.csv"
+                observation_fields, observation_rows = self.read_canonical_dataset(
+                    "observations.csv"
                 )
-                summary_fields, summary_rows = read_csv(
-                    self.paths.public_dir / "photo_batch_summary.csv"
+                summary_fields, summary_rows = self.read_canonical_dataset(
+                    "photo_batch_summary.csv"
                 )
 
                 known_photo_ids = {row["photo_id"] for row in manifest_rows}
@@ -2277,8 +2673,30 @@ class IngestionService:
                     prefix="ingestion-publish-", dir=self.paths.state_dir
                 ) as temporary:
                     candidate_dir = Path(temporary)
-                    for source in self.paths.public_dir.glob("*.csv"):
-                        shutil.copy2(source, candidate_dir / source.name)
+                    with self._connection() as connection:
+                        filenames = [
+                            str(row["filename"])
+                            for row in connection.execute(
+                                "SELECT filename FROM canonical_datasets ORDER BY filename"
+                            ).fetchall()
+                        ]
+                        for filename in filenames:
+                            fields, rows = self._read_canonical_dataset(
+                                connection, filename
+                            )
+                            line_terminator = connection.execute(
+                                """
+                                SELECT line_terminator FROM canonical_datasets
+                                WHERE filename = ?
+                                """,
+                                (filename,),
+                            ).fetchone()["line_terminator"]
+                            write_csv(
+                                candidate_dir / filename,
+                                fields,
+                                rows,
+                                line_terminator=str(line_terminator),
+                            )
                     write_csv(candidate_dir / "photo_manifest.csv", manifest_fields, manifest_rows)
                     write_csv(
                         candidate_dir / "observations.csv", observation_fields, observation_rows
@@ -2286,30 +2704,70 @@ class IngestionService:
                     write_csv(
                         candidate_dir / "photo_batch_summary.csv", summary_fields, summary_rows
                     )
+                    write_analysis_ready_export(candidate_dir)
                     issues = validate_public_photo_data(candidate_dir, self.paths.schema_dir)
                     if issues:
                         details = "; ".join(issue.format() for issue in issues[:8])
                         raise IngestionError(f"Publication failed validation: {details}")
 
-                atomic_write_csv(
-                    self.paths.public_dir / "photo_manifest.csv", manifest_fields, manifest_rows
-                )
-                atomic_write_csv(
-                    self.paths.public_dir / "observations.csv",
-                    observation_fields,
-                    observation_rows,
-                )
-                atomic_write_csv(
-                    self.paths.public_dir / "photo_batch_summary.csv",
-                    summary_fields,
-                    summary_rows,
-                )
-                output_row_counts: dict[str, int] = {}
-                output_sha256: dict[str, str] = {}
-                for path in sorted(self.paths.public_dir.glob("*.csv")):
-                    _, rows = read_csv(path)
-                    output_row_counts[path.name] = len(rows)
-                    output_sha256[path.name] = self._sha256(path)
+                    output_row_counts: dict[str, int] = {}
+                    output_sha256: dict[str, str] = {}
+                    for path in sorted(candidate_dir.glob("*.csv")):
+                        _, rows = read_csv(path)
+                        output_row_counts[path.name] = len(rows)
+                        output_sha256[path.name] = self._sha256(path)
+
+                with self._connection() as connection:
+                    self._replace_canonical_dataset(
+                        connection,
+                        "photo_manifest.csv",
+                        manifest_fields,
+                        manifest_rows,
+                    )
+                    self._replace_canonical_dataset(
+                        connection,
+                        "observations.csv",
+                        observation_fields,
+                        observation_rows,
+                    )
+                    self._replace_canonical_dataset(
+                        connection,
+                        "photo_batch_summary.csv",
+                        summary_fields,
+                        summary_rows,
+                    )
+                    connection.execute(
+                        """
+                        UPDATE batches
+                        SET status = 'published', published_at = ?
+                        WHERE batch_id = ?
+                        """,
+                        (utc_now(), batch_id),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE publication_runs
+                        SET status = 'succeeded', validation_status = 'passed',
+                            photo_rows_written = ?, output_row_counts_json = ?,
+                            output_sha256_json = ?, completed_at = ?
+                        WHERE run_id = ?
+                        """,
+                        (
+                            len(new_manifest_rows),
+                            json.dumps(
+                                output_row_counts,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            json.dumps(
+                                output_sha256,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            utc_now(),
+                            run_id,
+                        ),
+                    )
             except Exception as error:
                 for path in copied_paths:
                     path.unlink(missing_ok=True)
@@ -2324,28 +2782,7 @@ class IngestionService:
                         (str(error), utc_now(), run_id),
                     )
                 raise
-
-            with self._connection() as connection:
-                connection.execute(
-                    "UPDATE batches SET status = 'published', published_at = ? WHERE batch_id = ?",
-                    (utc_now(), batch_id),
-                )
-                connection.execute(
-                    """
-                    UPDATE publication_runs
-                    SET status = 'succeeded', validation_status = 'passed',
-                        photo_rows_written = ?, output_row_counts_json = ?,
-                        output_sha256_json = ?, completed_at = ?
-                    WHERE run_id = ?
-                    """,
-                    (
-                        len(new_manifest_rows),
-                        json.dumps(output_row_counts, sort_keys=True, separators=(",", ":")),
-                        json.dumps(output_sha256, sort_keys=True, separators=(",", ":")),
-                        utc_now(),
-                        run_id,
-                    ),
-                )
+            self.export_public_data()
             if self.google_sheets_configuration()["available"]:
                 try:
                     self.sync_google_sheets(run_id)

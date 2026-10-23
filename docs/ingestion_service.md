@@ -46,26 +46,26 @@ optional model-assisted observation draft
 batch-level observation review
       |
       v
-temporary public-dataset build
+temporary canonical-dataset build
       |
       v
 schema + referential validation
       |
       v
-atomic CSV publication + private photo archive
+transactional SQLite publication + private photo archive
       |
       v
-publication-run lineage + optional Google Sheets mirror
+validated CSV export + publication-run lineage + optional Google Sheets mirror
 ```
 
 ## Storage Boundaries
 
-- `data/raw/ingestion/ingestion.sqlite`: local batch and review state; ignored by Git
+- `data/raw/ingestion/ingestion.sqlite`: canonical batch, review, metadata, and publication state; ignored by Git
 - `data/raw/ingestion/batches/`: staged originals and optimized previews; ignored by Git
 - `data/raw/ingestion/upload_suggestions/`: temporary pre-staging uploads; ignored by Git and expired after 24 hours
 - `data/raw/site_anchors.csv`: exact private site coordinates used only for GPS matching; ignored by Git
 - `photos/`: published private originals in deterministic site/date paths; ignored by Git
-- `data/public/`: sanitized, validated metadata snapshots committed to Git
+- `data/public/`: deterministic sanitized exports committed to Git
 
 Set `PLANT_INGESTION_STATE` or `PLANT_PHOTO_ARCHIVE` to use different local storage locations:
 
@@ -76,6 +76,41 @@ export PLANT_SITE_ANCHORS="$HOME/PlantSuccession/site_anchors.csv"
 ```
 
 The service never exposes Drive IDs, private links, or exact coordinates in the public manifest.
+
+## Canonical Store Operations
+
+SQLite is the sole mutable source of truth during normal operation. Schema changes are recorded in
+`schema_migrations`; startup applies missing migrations and seeds the seven core `canonical_datasets`
+from the committed CSV snapshot only when that store is empty. It never silently imports later CSV edits.
+`analysis_ready_observations.csv` is a materialized derived export rebuilt from observations, sites, and
+the photo manifest every time exports are generated; it is not independently editable state.
+
+```bash
+# Inspect schema versions, datasets, row counts, and content hashes.
+.venv/bin/python scripts/manage_data_store.py status
+
+# Rebuild all validated public CSV snapshots from SQLite.
+.venv/bin/python scripts/manage_data_store.py export
+
+# Create a consistent online SQLite backup plus SHA-256 manifest.
+.venv/bin/python scripts/manage_data_store.py backup
+```
+
+Backups default to the ignored `data/raw/ingestion/backups/` directory. Copy important backups to a
+separate protected location; the photo archive remains a separate storage boundary and is not embedded
+in the SQLite backup.
+
+An external CSV directory can replace the canonical snapshots only through an explicit validated import:
+
+```bash
+.venv/bin/python scripts/manage_data_store.py import \
+  --source /path/to/validated/csvs \
+  --replace
+```
+
+This command is for migration or recovery, not routine editing. The ordinary flow is SQLite to public CSV
+exports to optional Google Sheets. To preserve completed reviews on GitHub, run `export`, run validation,
+and commit the changed files under `data/public/`; never commit `ingestion.sqlite` itself.
 
 ## Operational Dashboard
 
@@ -248,18 +283,19 @@ A batch cannot publish while any photo is unresolved or its observation review i
 
 1. Copies originals into the private deterministic archive.
 2. Builds candidate versions of `photo_manifest.csv`, `observations.csv`, and
-   `photo_batch_summary.csv` in a temporary directory.
+   `photo_batch_summary.csv` from canonical SQLite snapshots in a temporary directory.
 3. Runs the complete public-data validator, including relational and privacy checks.
-4. Atomically replaces the three public CSVs only when validation succeeds.
+4. Commits all three datasets and publication lineage in one SQLite transaction.
+5. Materializes all public CSVs from SQLite with atomic file replacement.
 
 The service is idempotent for an unchanged published batch, supports observation-metadata revisions without
 duplicating photos, and detects repeat files by content hash.
 
 ## Optional Google Sheets Mirror
 
-Google Sheets is an output destination, not the canonical database. A successful local publication remains
-valid if Sheets is unavailable; the failed sync attempt is retained in SQLite and can be retried from the
-**Published data** view.
+Google Sheets is an output destination, not the canonical database. Each sync first regenerates CSV exports
+from SQLite. A successful local publication remains valid if Sheets is unavailable; the failed sync attempt
+is retained in SQLite and can be retried from the **Published data** view.
 
 Create a Google Cloud service account with Sheets API access, share the target workbook with its service
 account email, and configure the application before launch:

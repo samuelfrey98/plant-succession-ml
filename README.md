@@ -63,9 +63,9 @@ become canonical data until a human saves the review. This is general-purpose mo
 custom-trained ecological classifier or expert taxonomic verification.
 
 The **Published data** view exposes the current validated snapshot, downloadable CSV products, and pipeline
-run history without requiring direct SQLite access. Google Sheets can be configured as a one-way mirror;
-SQLite and validated CSVs remain the source of truth, and a Sheets failure is recorded for retry rather than
-invalidating publication.
+run history without requiring direct SQLite access. SQLite is the operational source of truth. Validated
+CSVs are deterministic, version-controlled exports, and Google Sheets is an optional one-way mirror. A
+Sheets failure is recorded for retry rather than invalidating publication.
 
 The opening **Dashboard** view reads directly from SQLite and refreshes every 15 seconds while visible. It
 summarizes pipeline state, review provenance, missing key fields, site/date coverage, and descriptive
@@ -83,6 +83,17 @@ Open `http://127.0.0.1:8765`. See [docs/ingestion_service.md](docs/ingestion_ser
 contract, API, Render deployment, failure behavior, and model-labeling extension point. The included
 `render.yaml` provisions a password-protected service and persistent storage for the mutable ingestion
 state; deploying the upload workflow safely therefore requires paid Render compute and disk resources.
+
+Inspect, export, or back up the canonical store:
+
+```bash
+.venv/bin/python scripts/manage_data_store.py status
+.venv/bin/python scripts/manage_data_store.py export
+.venv/bin/python scripts/manage_data_store.py backup
+```
+
+After completing reviews, run `export`, validate the files, and commit the changed `data/public/*.csv`
+snapshots. The ignored SQLite database preserves local workflow history but is intentionally not pushed.
 
 ## Longitudinal Results
 
