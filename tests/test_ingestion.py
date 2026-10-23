@@ -32,6 +32,7 @@ from plant_succession.ingestion import (  # noqa: E402
     write_csv,
 )
 from plant_succession.google_sheets import GoogleSheetsSyncError  # noqa: E402
+from plant_succession.machine_review import MachineReviewError  # noqa: E402
 from plant_succession.app import initialize_public_data, valid_basic_auth  # noqa: E402
 from plant_succession.validate import validate_public_photo_data  # noqa: E402
 
@@ -101,6 +102,17 @@ class FakeMachineReviewer:
                 "review_priority_fields": ["dominant_species"],
             },
         }
+
+
+class FailingMachineReviewer(FakeMachineReviewer):
+    def review(
+        self,
+        *,
+        site_id: str,
+        observation_date: str,
+        photos: list[dict[str, str]],
+    ) -> dict[str, object]:
+        raise MachineReviewError("Temporary model outage.")
 
 
 class FakeSheetsPublisher:
@@ -391,6 +403,67 @@ class IngestionServiceTests(unittest.TestCase):
         machine_values = batch["latest_machine_review"]["draft"]["values"]
         self.assertEqual(machine_values["estimated_total_vegetation_cover_pct"], 62)
 
+    def test_machine_review_queue_is_selective_durable_and_retryable(self):
+        self.service.machine_reviewer = FakeMachineReviewer()
+        eligible = self.service.create_batch(
+            "3", "2026-11-01", "", [("wide.jpg", image_bytes((50, 90, 50)))]
+        )
+        eligible = self.service.accept_explicit_suggestions(eligible["batch_id"])
+        unresolved = self.service.create_batch(
+            "4", "2026-11-01", "", [("IMG_9001.jpg", image_bytes((40, 80, 40)))]
+        )
+        completed = self.service.create_batch(
+            "5", "2026-11-01", "", [("wide.jpg", image_bytes((60, 100, 60)))]
+        )
+        completed = self.service.accept_explicit_suggestions(completed["batch_id"])
+        completed = self.service.save_observation_review(
+            completed["batch_id"],
+            {"notes": "Human reviewed.", "completion_status": "reviewed"},
+            finalize=True,
+        )
+
+        queued = self.service.enqueue_machine_reviews(
+            [eligible["batch_id"], unresolved["batch_id"], completed["batch_id"]]
+        )
+        self.assertEqual(queued["created_count"], 1)
+        self.assertEqual(queued["skipped_count"], 2)
+        self.assertEqual(self.service.machine_review_queue()["counts"]["queued"], 1)
+        forced_completed = self.service.enqueue_machine_reviews(
+            [completed["batch_id"]], force=True
+        )
+        self.assertEqual(forced_completed["created_count"], 0)
+        self.assertIn("Human review", forced_completed["skipped"][0]["reason"])
+
+        processed = self.service.process_machine_review_queue()
+        self.assertEqual(processed["processed_count"], 1)
+        self.assertEqual(processed["results"][0]["status"], "succeeded")
+        self.assertEqual(self.service.machine_review_queue()["counts"]["succeeded"], 1)
+        reviewed = self.service.get_batch(eligible["batch_id"])
+        self.assertIsNone(reviewed["observation_review"])
+        self.assertEqual(
+            reviewed["latest_machine_review"]["draft"]["values"]["bare_ground_pct"],
+            28,
+        )
+        duplicate = self.service.enqueue_machine_reviews([eligible["batch_id"]])
+        self.assertEqual(duplicate["created_count"], 0)
+        self.assertIn("already exists", duplicate["skipped"][0]["reason"])
+
+        retry_batch = self.service.create_batch(
+            "6", "2026-11-01", "", [("wide.jpg", image_bytes((70, 110, 70)))]
+        )
+        retry_batch = self.service.accept_explicit_suggestions(retry_batch["batch_id"])
+        self.service.machine_reviewer = FailingMachineReviewer()
+        self.service.enqueue_machine_reviews([retry_batch["batch_id"]])
+        failed = self.service.process_machine_review_queue()
+        self.assertEqual(failed["results"][0]["status"], "failed")
+        self.assertEqual(self.service.machine_review_queue()["counts"]["failed"], 1)
+
+        retried = self.service.retry_failed_machine_reviews()
+        self.assertEqual(retried["queued_count"], 1)
+        self.service.machine_reviewer = FakeMachineReviewer()
+        succeeded = self.service.process_machine_review_queue()
+        self.assertEqual(succeeded["results"][0]["status"], "succeeded")
+
     def test_duplicate_upload_is_counted_and_not_staged_twice(self):
         first = image_bytes((10, 20, 30)).getvalue()
         batch = self.service.create_batch(
@@ -424,10 +497,11 @@ class IngestionServiceTests(unittest.TestCase):
 
     def test_canonical_store_is_versioned_and_exports_over_changed_csvs(self):
         status = self.service.canonical_store_status()
-        self.assertEqual(status["schema_version"], 4)
-        self.assertEqual(status["expected_schema_version"], 4)
+        self.assertEqual(status["schema_version"], 5)
+        self.assertEqual(status["expected_schema_version"], 5)
         self.assertEqual(
-            {migration["version"] for migration in status["migrations"]}, {1, 2, 3, 4}
+            {migration["version"] for migration in status["migrations"]},
+            {1, 2, 3, 4, 5},
         )
         self.assertIn(
             "observations.csv",
@@ -453,7 +527,7 @@ class IngestionServiceTests(unittest.TestCase):
         self.assertEqual(csv_rows(path)[0]["notes"], canonical_note)
 
         reloaded = IngestionService(self.service.paths)
-        self.assertEqual(len(reloaded.canonical_store_status()["migrations"]), 4)
+        self.assertEqual(len(reloaded.canonical_store_status()["migrations"]), 5)
 
     def test_explicit_import_and_online_backup(self):
         source = self.root / "replacement"
@@ -473,7 +547,7 @@ class IngestionServiceTests(unittest.TestCase):
         backup = self.service.backup_database(self.root / "backups")
         backup_path = Path(backup["path"])
         self.assertTrue(backup_path.exists())
-        self.assertEqual(backup["schema_versions"], [1, 2, 3, 4])
+        self.assertEqual(backup["schema_versions"], [1, 2, 3, 4, 5])
         with closing(sqlite3.connect(backup_path)) as connection:
             self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         manifest = json.loads(Path(backup["manifest"]).read_text(encoding="utf-8"))

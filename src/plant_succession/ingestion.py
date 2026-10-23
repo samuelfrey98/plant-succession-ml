@@ -49,7 +49,7 @@ UPLOAD_TOKEN_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 MAX_SITE_MATCH_DISTANCE_METERS = 150.0
 UPLOAD_SUGGESTION_MAX_AGE_SECONDS = 24 * 60 * 60
 REVIEW_ACTOR_TYPES = {"human", "ai_assistant", "model", "rule", "legacy_unknown"}
-DATABASE_SCHEMA_VERSION = 4
+DATABASE_SCHEMA_VERSION = 5
 DERIVED_EXPORTS = {"analysis_ready_observations.csv"}
 OBSERVATION_PERCENT_FIELDS = (
     "estimated_total_vegetation_cover_pct",
@@ -579,6 +579,7 @@ class IngestionService:
         self.machine_reviewer = machine_reviewer
         self.sheets_publisher = sheets_publisher
         self._publish_lock = threading.Lock()
+        self._machine_review_lock = threading.Lock()
         self.paths.state_dir.mkdir(parents=True, exist_ok=True)
         self.paths.batch_dir.mkdir(parents=True, exist_ok=True)
         self.paths.suggestion_dir.mkdir(parents=True, exist_ok=True)
@@ -590,6 +591,7 @@ class IngestionService:
         connection = sqlite3.connect(self.paths.database)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 5000")
         return connection
 
     @contextmanager
@@ -824,6 +826,46 @@ class IngestionService:
                 DELETE FROM canonical_datasets
                 WHERE filename = 'analysis_ready_observations.csv';
                 """,
+            )
+            self._apply_migration(
+                connection,
+                5,
+                "durable_machine_review_queue",
+                """
+                CREATE TABLE machine_review_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    batch_id TEXT NOT NULL REFERENCES batches(batch_id) ON DELETE CASCADE,
+                    status TEXT NOT NULL,
+                    requested_by TEXT NOT NULL,
+                    requested_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    error_message TEXT NOT NULL DEFAULT ''
+                );
+
+                CREATE INDEX machine_review_jobs_status_idx
+                ON machine_review_jobs(status, requested_at);
+
+                CREATE INDEX machine_review_jobs_batch_idx
+                ON machine_review_jobs(batch_id, requested_at);
+
+                CREATE UNIQUE INDEX machine_review_jobs_active_batch_idx
+                ON machine_review_jobs(batch_id)
+                WHERE status IN ('queued', 'running');
+                """,
+            )
+            connection.execute(
+                """
+                UPDATE machine_review_jobs
+                SET status = 'queued',
+                    started_at = NULL,
+                    error_message = CASE
+                        WHEN error_message = '' THEN 'Recovered after service restart.'
+                        ELSE error_message
+                    END
+                WHERE status = 'running'
+                """
             )
             connection.execute(
                 """
@@ -1591,7 +1633,25 @@ class IngestionService:
                     r.updated_at AS review_updated_at,
                     integrity.status AS integrity_status,
                     integrity.issue_count AS integrity_issue_count,
-                    integrity.warning_count AS integrity_warning_count
+                    integrity.warning_count AS integrity_warning_count,
+                    (
+                        SELECT job.status FROM machine_review_jobs job
+                        WHERE job.batch_id = b.batch_id
+                        ORDER BY job.requested_at DESC, job.job_id DESC
+                        LIMIT 1
+                    ) AS machine_review_status,
+                    (
+                        SELECT job.error_message FROM machine_review_jobs job
+                        WHERE job.batch_id = b.batch_id
+                        ORDER BY job.requested_at DESC, job.job_id DESC
+                        LIMIT 1
+                    ) AS machine_review_error,
+                    EXISTS (
+                        SELECT 1 FROM observation_review_events event
+                        WHERE event.batch_id = b.batch_id
+                          AND event.actor_type = 'model'
+                          AND event.action = 'suggested'
+                    ) AS machine_draft_available
                 FROM batches b
                 LEFT JOIN photos p ON p.batch_id = b.batch_id
                 LEFT JOIN observation_reviews r ON r.batch_id = b.batch_id
@@ -1613,6 +1673,15 @@ class IngestionService:
                 WHERE status = 'failed'
                 """
             ).fetchone()["count"]
+            machine_review_queue_counts = {
+                row["status"]: row["count"]
+                for row in connection.execute(
+                    """
+                    SELECT status, COUNT(*) AS count
+                    FROM machine_review_jobs GROUP BY status
+                    """
+                )
+            }
             observation_events = connection.execute(
                 """
                 SELECT batch_id, actor_type, action, created_at
@@ -1783,6 +1852,10 @@ class IngestionService:
             },
             "review_status_counts": dict(review_status_counts),
             "review_provenance_counts": dict(provenance_counts),
+            "machine_review_queue_counts": {
+                status: machine_review_queue_counts.get(status, 0)
+                for status in ("queued", "running", "succeeded", "failed", "skipped")
+            },
             "quality": {
                 **quality_counts,
                 "failed_sync_attempts": failed_syncs,
@@ -2071,6 +2144,15 @@ class IngestionService:
                 """,
                 (batch_id,),
             ).fetchall()
+            latest_machine_review_job = connection.execute(
+                """
+                SELECT * FROM machine_review_jobs
+                WHERE batch_id = ?
+                ORDER BY requested_at DESC, job_id DESC
+                LIMIT 1
+                """,
+                (batch_id,),
+            ).fetchone()
         result = dict(batch)
         events_by_photo: dict[str, list[dict[str, object]]] = {}
         for event in review_events:
@@ -2122,6 +2204,11 @@ class IngestionService:
         result["observation_review_events"] = [
             dict(event) for event in observation_review_events
         ]
+        result["latest_machine_review_job"] = (
+            dict(latest_machine_review_job)
+            if latest_machine_review_job is not None
+            else None
+        )
         latest_machine_review = next(
             (
                 event
@@ -2157,6 +2244,261 @@ class IngestionService:
                 "reason": "No machine-review provider is configured.",
             }
         return self.machine_reviewer.configuration()
+
+    def machine_review_queue(self, limit: int = 100) -> dict[str, object]:
+        """Return durable machine-review work and aggregate queue state."""
+
+        with self._connection() as connection:
+            counts = {
+                row["status"]: row["count"]
+                for row in connection.execute(
+                    "SELECT status, COUNT(*) AS count FROM machine_review_jobs GROUP BY status"
+                )
+            }
+            rows = connection.execute(
+                """
+                SELECT
+                    job.*,
+                    batch.site_id,
+                    batch.observation_date,
+                    review.completion_status
+                FROM machine_review_jobs job
+                JOIN batches batch ON batch.batch_id = job.batch_id
+                LEFT JOIN observation_reviews review ON review.batch_id = job.batch_id
+                ORDER BY job.requested_at DESC, job.job_id DESC
+                LIMIT ?
+                """,
+                (max(1, min(limit, 500)),),
+            ).fetchall()
+        return {
+            "counts": {
+                status: counts.get(status, 0)
+                for status in ("queued", "running", "succeeded", "failed", "skipped")
+            },
+            "jobs": [dict(row) for row in rows],
+        }
+
+    def enqueue_machine_reviews(
+        self,
+        batch_ids: Iterable[str],
+        *,
+        requested_by: str = "project_owner",
+        force: bool = False,
+    ) -> dict[str, object]:
+        """Queue selected, photo-complete observations without spending on duplicates."""
+
+        if not requested_by.strip():
+            raise IngestionError("Machine-review requester metadata is invalid.")
+        configuration = self.machine_review_configuration()
+        if not configuration.get("available"):
+            raise IngestionError(
+                str(configuration.get("reason") or "Machine review is not configured.")
+            )
+        unique_batch_ids = list(dict.fromkeys(str(value).strip() for value in batch_ids))
+        unique_batch_ids = [value for value in unique_batch_ids if value]
+        if not unique_batch_ids:
+            raise IngestionError("Select at least one observation for machine review.")
+        if len(unique_batch_ids) > 100:
+            raise IngestionError("Queue at most 100 observations at a time.")
+
+        created: list[dict[str, str]] = []
+        skipped: list[dict[str, str]] = []
+        with self._connection() as connection:
+            for batch_id in unique_batch_ids:
+                batch = connection.execute(
+                    """
+                    SELECT
+                        batch.batch_id,
+                        COUNT(photo.photo_id) AS photo_count,
+                        SUM(CASE WHEN photo.review_status = 'verified' THEN 1 ELSE 0 END)
+                            AS verified_count,
+                        review.completion_status,
+                        EXISTS (
+                            SELECT 1 FROM observation_review_events event
+                            WHERE event.batch_id = batch.batch_id
+                              AND event.actor_type = 'model'
+                              AND event.action = 'suggested'
+                        ) AS has_machine_draft,
+                        EXISTS (
+                            SELECT 1 FROM machine_review_jobs active_job
+                            WHERE active_job.batch_id = batch.batch_id
+                              AND active_job.status IN ('queued', 'running')
+                        ) AS has_active_job
+                    FROM batches batch
+                    LEFT JOIN photos photo ON photo.batch_id = batch.batch_id
+                    LEFT JOIN observation_reviews review ON review.batch_id = batch.batch_id
+                    WHERE batch.batch_id = ?
+                    GROUP BY batch.batch_id
+                    """,
+                    (batch_id,),
+                ).fetchone()
+                reason = ""
+                if batch is None:
+                    reason = "Unknown observation."
+                elif int(batch["photo_count"] or 0) == 0:
+                    reason = "No photos are available."
+                elif int(batch["verified_count"] or 0) != int(batch["photo_count"] or 0):
+                    reason = "Photo-role review is incomplete."
+                elif batch["completion_status"] == "reviewed":
+                    reason = "Human review is already complete."
+                elif batch["has_active_job"]:
+                    reason = "Already queued or running."
+                elif batch["has_machine_draft"] and not force:
+                    reason = "A machine draft already exists."
+                if reason:
+                    skipped.append({"batch_id": batch_id, "reason": reason})
+                    continue
+
+                job_id = f"machine_review_job_{uuid.uuid4().hex}"
+                requested_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+                connection.execute(
+                    """
+                    INSERT INTO machine_review_jobs (
+                        job_id, batch_id, status, requested_by, requested_at
+                    ) VALUES (?, ?, 'queued', ?, ?)
+                    """,
+                    (job_id, batch_id, requested_by.strip(), requested_at),
+                )
+                created.append(
+                    {
+                        "job_id": job_id,
+                        "batch_id": batch_id,
+                        "status": "queued",
+                        "requested_at": requested_at,
+                    }
+                )
+        return {
+            "created_count": len(created),
+            "skipped_count": len(skipped),
+            "created": created,
+            "skipped": skipped,
+        }
+
+    def _claim_next_machine_review_job(self) -> dict[str, object] | None:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT * FROM machine_review_jobs
+                WHERE status = 'queued'
+                ORDER BY requested_at, job_id
+                LIMIT 1
+                """
+            ).fetchone()
+            if row is None:
+                connection.commit()
+                return None
+            started_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+            connection.execute(
+                """
+                UPDATE machine_review_jobs
+                SET status = 'running', started_at = ?, completed_at = NULL,
+                    attempt_count = attempt_count + 1, error_message = ''
+                WHERE job_id = ? AND status = 'queued'
+                """,
+                (started_at, row["job_id"]),
+            )
+            connection.commit()
+            return {**dict(row), "status": "running", "started_at": started_at}
+        finally:
+            connection.close()
+
+    def _finish_machine_review_job(
+        self, job_id: str, status: str, error_message: str = ""
+    ) -> None:
+        if status not in {"succeeded", "failed", "skipped"}:
+            raise ValueError("Unsupported machine-review terminal status.")
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE machine_review_jobs
+                SET status = ?, completed_at = ?, error_message = ?
+                WHERE job_id = ?
+                """,
+                (
+                    status,
+                    datetime.now(timezone.utc).isoformat(timespec="microseconds"),
+                    error_message.strip(),
+                    job_id,
+                ),
+            )
+
+    def process_machine_review_queue(self, limit: int | None = None) -> dict[str, object]:
+        """Process queued jobs serially without holding SQLite during model requests."""
+
+        if not self._machine_review_lock.acquire(blocking=False):
+            return {"worker_started": False, "processed_count": 0, "results": []}
+        processed: list[dict[str, str]] = []
+        try:
+            while limit is None or len(processed) < limit:
+                job = self._claim_next_machine_review_job()
+                if job is None:
+                    break
+                job_id = str(job["job_id"])
+                batch_id = str(job["batch_id"])
+                with self._connection() as connection:
+                    review = connection.execute(
+                        "SELECT completion_status FROM observation_reviews WHERE batch_id = ?",
+                        (batch_id,),
+                    ).fetchone()
+                if review is not None and review["completion_status"] == "reviewed":
+                    message = "Human review completed before machine processing."
+                    self._finish_machine_review_job(job_id, "skipped", message)
+                    processed.append(
+                        {"job_id": job_id, "batch_id": batch_id, "status": "skipped"}
+                    )
+                    continue
+                try:
+                    self.generate_machine_observation_review(batch_id)
+                except IngestionError as error:
+                    self._finish_machine_review_job(job_id, "failed", str(error))
+                    processed.append(
+                        {"job_id": job_id, "batch_id": batch_id, "status": "failed"}
+                    )
+                else:
+                    self._finish_machine_review_job(job_id, "succeeded")
+                    processed.append(
+                        {"job_id": job_id, "batch_id": batch_id, "status": "succeeded"}
+                    )
+        finally:
+            self._machine_review_lock.release()
+        return {
+            "worker_started": True,
+            "processed_count": len(processed),
+            "results": processed,
+        }
+
+    def retry_failed_machine_reviews(self) -> dict[str, int]:
+        """Return failed, still-incomplete observations to the queue."""
+
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE machine_review_jobs
+                SET status = 'queued', started_at = NULL, completed_at = NULL,
+                    error_message = ''
+                WHERE status = 'failed'
+                  AND job_id = (
+                      SELECT retry_job.job_id FROM machine_review_jobs retry_job
+                      WHERE retry_job.batch_id = machine_review_jobs.batch_id
+                        AND retry_job.status = 'failed'
+                      ORDER BY retry_job.requested_at DESC, retry_job.job_id DESC
+                      LIMIT 1
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM machine_review_jobs active_job
+                      WHERE active_job.batch_id = machine_review_jobs.batch_id
+                        AND active_job.status IN ('queued', 'running')
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM observation_reviews review
+                      WHERE review.batch_id = machine_review_jobs.batch_id
+                        AND review.completion_status = 'reviewed'
+                  )
+                """
+            )
+        return {"queued_count": cursor.rowcount}
 
     def generate_machine_observation_review(self, batch_id: str) -> dict[str, object]:
         if self.machine_reviewer is None:

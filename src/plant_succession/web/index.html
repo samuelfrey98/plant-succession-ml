@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Review queue for Plant Succession field-photo ingestion.">
     <title>Plant Succession Ingest</title>
-    <link rel="stylesheet" href="/assets/styles.css?v=20261022-1">
+    <link rel="stylesheet" href="/assets/styles.css?v=20261023-2">
     <script defer src="/assets/lucide.min.js"></script>
-    <script defer src="/assets/app.js?v=20261022-1"></script>
+    <script defer src="/assets/app.js?v=20261023-2"></script>
   </head>
   <body>
     <header class="app-header">
@@ -206,11 +206,38 @@
             <h2>Upload batches</h2>
           </div>
           <div class="segmented-control" role="group" aria-label="Filter batches">
-            <button class="segment active" data-filter="active" type="button" title="Batches not yet published">Open</button>
+            <button class="segment active" data-filter="review" type="button" title="Observations that still need human review">Needs review</button>
+            <button class="segment" data-filter="active" type="button" title="Batches not yet published">Open</button>
             <button class="segment" data-filter="published" type="button">Published</button>
             <button class="segment" data-filter="all" type="button">All</button>
           </div>
         </div>
+
+        <section class="machine-queue-toolbar" aria-label="Machine review queue controls">
+          <div class="machine-queue-selection">
+            <label class="check-control" for="select-visible-batches">
+              <input id="select-visible-batches" type="checkbox">
+              <span>Select visible eligible observations</span>
+            </label>
+            <small id="machine-selection-count">0 selected</small>
+          </div>
+          <div class="machine-queue-state" id="machine-queue-state" aria-live="polite">
+            <span><strong id="machine-queued-count">0</strong> queued</span>
+            <span><strong id="machine-running-count">0</strong> running</span>
+            <span><strong id="machine-ready-count">0</strong> completed jobs</span>
+            <span><strong id="machine-failed-count">0</strong> failed</span>
+          </div>
+          <div class="machine-queue-actions">
+            <button class="secondary-button hidden" id="retry-machine-button" type="button">
+              <i data-lucide="rotate-ccw" aria-hidden="true"></i>
+              Retry failed
+            </button>
+            <button class="primary-button" id="queue-machine-button" type="button" disabled>
+              <i data-lucide="list-plus" aria-hidden="true"></i>
+              Queue selected
+            </button>
+          </div>
+        </section>
 
         <div class="batch-list" id="batch-list">
           <div class="empty-state">Loading ingestion queue...</div>
@@ -267,6 +294,10 @@
                   <strong>Latest suggestion</strong>
                   <p id="machine-summary"></p>
                   <p class="machine-priority" id="machine-priority"></p>
+                <button class="secondary-button" id="apply-machine-draft-button" type="button">
+                  <i data-lucide="file-input" aria-hidden="true"></i>
+                  Load draft into form
+                </button>
                 </div>
                 <details>
                   <summary>View confidence and evidence</summary>

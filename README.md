@@ -57,10 +57,11 @@ gate names individual site/date exceptions and requires an explicit override bef
 After photo roles are resolved, the batch enters observation review. Drafts remain private, blank values
 remain null, and only an explicitly completed review can proceed to validated publication.
 
-The Observation tab can optionally send optimized previews to a configured vision model for a structured
-first pass. Its suggestions fill an editable form and are retained as separate audit events; they do not
-become canonical data until a human saves the review. This is general-purpose model assistance, not a
-custom-trained ecological classifier or expert taxonomic verification.
+The review queue can optionally send only user-selected observations to a configured vision model for a
+structured first pass. Durable job states support background processing and retry, while completed human
+reviews and existing machine drafts are excluded from bulk submission by default. Suggestions remain
+separate audit events until a human deliberately loads, edits, and saves one. This is general-purpose model
+assistance, not a custom-trained ecological classifier or expert taxonomic verification.
 
 The **Published data** view exposes the current validated snapshot, downloadable CSV products, and pipeline
 run history without requiring direct SQLite access. SQLite is the operational source of truth. Validated

@@ -247,12 +247,13 @@ schema only during validated publication.
 Published batches remain reviewable. Saving a new observation version reopens only the metadata stage;
 republishing updates the existing observation row while retaining the original photo IDs and archive files.
 
-### Optional Machine Draft
+### Optional Machine Draft Queue
 
-The Observation tab can request a first-pass draft from a general-purpose vision model after every photo
+The ingestion workspace can queue a first-pass draft from a general-purpose vision model after every photo
 role has been verified. This is optional and deliberately human-gated: opening a batch does not transmit
-images. Clicking **Generate machine draft** sends the batch's optimized JPEG previews, verified photo roles,
-site ID, and observation date to the configured provider.
+images. Select eligible observations and click **Queue selected** to submit only those records. Completed
+human reviews and observations that already have a machine draft are excluded from bulk selection by
+default. The per-observation **Generate machine draft** command remains available as an explicit re-run.
 
 Configure it before starting the service:
 
@@ -268,10 +269,16 @@ evidence, and a list of fields that deserve extra attention. Unsupported fields 
 prompt prohibits disturbance inference and treats taxonomic labels as uncertain unless the photographs
 show diagnostic evidence.
 
-A generated draft is stored as an append-only `model` / `suggested` event. It fills the browser form for
-editing but does not write the canonical observation-review row. Only a later human **Save draft** or
-**Complete review** action creates the canonical values used during publication. Re-running the model adds
-another suggestion event instead of erasing earlier model or human judgments.
+Queue jobs are durable SQLite records with `queued`, `running`, `succeeded`, `failed`, or `skipped` state.
+The worker claims one job at a time and does not hold a database connection during the model request, so
+human review saves remain available. Interrupted running jobs return to `queued` when the service restarts;
+failed jobs can be retried. A job is skipped if its human review becomes complete before processing.
+
+A generated draft is stored as an append-only `model` / `suggested` event. **Load draft into form** copies
+the suggestion into the browser without saving it; existing human values receive an explicit confirmation
+before replacement. Only a later human **Save draft** or **Complete review** action creates the canonical
+values used during publication. Re-running the model adds another suggestion event instead of erasing
+earlier model or human judgments.
 
 This feature is not a custom-trained ecological classifier and should not be described as ground truth.
 API use may incur provider charges. Keep `OPENAI_API_KEY` in the environment; `.env` and common credential
@@ -324,6 +331,10 @@ FastAPI publishes interactive API documentation at `http://127.0.0.1:8765/docs`.
 - `PATCH /api/photos/{photo_id}`: submit a human-verified role
 - `POST /api/batches/{batch_id}/accept-suggestions`: accept explicit filename suggestions
 - `GET /api/machine-review/config`: report whether optional model review is configured
+- `GET /api/machine-review/jobs`: retrieve durable queue state and recent jobs
+- `POST /api/machine-review/jobs`: queue selected eligible observations
+- `POST /api/machine-review/jobs/process`: resume queued work
+- `POST /api/machine-review/jobs/retry-failed`: retry failed, still-incomplete observations
 - `POST /api/batches/{batch_id}/machine-review`: generate and audit a model suggestion
 - `PUT /api/batches/{batch_id}/observation-review`: save or complete the batch observation review
 - `POST /api/batches/{batch_id}/publish`: validate and publish a ready batch
@@ -331,7 +342,7 @@ FastAPI publishes interactive API documentation at `http://127.0.0.1:8765/docs`.
 
 ## Current Boundary
 
-This version automates ingestion, metadata normalization, photo-role review, optional model-assisted
-observation drafts, structured human review, and publication. Disturbance events remain a separate
+This version automates ingestion, metadata normalization, photo-role review, selective model-assisted
+observation drafts with durable queue state, structured human review, and publication. Disturbance events remain a separate
 evidence-backed workflow. Model output is advisory and cannot cross the publication boundary without a
 human-completed observation review.
