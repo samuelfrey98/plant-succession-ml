@@ -9,7 +9,7 @@ import secrets
 import shutil
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -139,6 +139,11 @@ class ObservationReviewUpdate(BaseModel):
     finalize: bool = False
 
 
+class MachineReviewQueueUpdate(BaseModel):
+    batch_ids: list[str]
+    force: bool = False
+
+
 def bad_request(error: IngestionError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(error))
 
@@ -188,6 +193,58 @@ def sync_google_sheets(run_id: str) -> dict[str, object]:
 @app.get("/api/machine-review/config")
 def machine_review_configuration() -> dict[str, object]:
     return service.machine_review_configuration()
+
+
+@app.get("/api/machine-review/jobs")
+def machine_review_jobs() -> dict[str, object]:
+    return service.machine_review_queue()
+
+
+@app.post("/api/machine-review/jobs", status_code=202)
+def enqueue_machine_review_jobs(
+    update: MachineReviewQueueUpdate, background_tasks: BackgroundTasks
+) -> dict[str, object]:
+    try:
+        result = service.enqueue_machine_reviews(
+            update.batch_ids,
+            requested_by=REVIEWER_ID,
+            force=update.force,
+        )
+        if result["created_count"]:
+            background_tasks.add_task(service.process_machine_review_queue)
+        return result
+    except IngestionError as error:
+        raise bad_request(error) from error
+
+
+@app.post("/api/machine-review/jobs/process", status_code=202)
+def process_machine_review_jobs(background_tasks: BackgroundTasks) -> dict[str, object]:
+    configuration = service.machine_review_configuration()
+    if not configuration.get("available"):
+        raise bad_request(
+            IngestionError(
+                str(configuration.get("reason") or "Machine review is not configured.")
+            )
+        )
+    background_tasks.add_task(service.process_machine_review_queue)
+    return {"accepted": True}
+
+
+@app.post("/api/machine-review/jobs/retry-failed", status_code=202)
+def retry_failed_machine_review_jobs(
+    background_tasks: BackgroundTasks,
+) -> dict[str, object]:
+    configuration = service.machine_review_configuration()
+    if not configuration.get("available"):
+        raise bad_request(
+            IngestionError(
+                str(configuration.get("reason") or "Machine review is not configured.")
+            )
+        )
+    result = service.retry_failed_machine_reviews()
+    if result["queued_count"]:
+        background_tasks.add_task(service.process_machine_review_queue)
+    return result
 
 
 @app.get("/api/batches/{batch_id}")

@@ -271,9 +271,21 @@ button.matrix-cell:hover { filter: brightness(0.96); box-shadow: 0 0 0 2px rgba(
 .segmented-control { display: inline-flex; padding: 3px; border: 1px solid #bec9c3; border-radius: 6px; background: #e9efeb; }
 .segment { border: 0; border-radius: 4px; padding: 7px 12px; background: transparent; color: #526159; font-size: 12px; font-weight: 700; }
 .segment.active { background: #fff; color: var(--ink); box-shadow: 0 1px 4px rgba(22, 45, 33, 0.12); }
+.machine-queue-toolbar { display: grid; grid-template-columns: minmax(210px, 1fr) auto auto; align-items: center; gap: 18px; margin-top: 14px; padding: 11px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.machine-queue-selection { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.check-control { display: inline-flex; align-items: center; gap: 8px; margin: 0; color: #405048; font-size: 11px; font-weight: 700; }
+.check-control input, .batch-selector input { width: 16px; height: 16px; accent-color: var(--green); }
+.machine-queue-selection small { color: var(--muted); white-space: nowrap; }
+.machine-queue-state { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.machine-queue-state strong { color: var(--ink); font-size: 12px; }
+.machine-queue-actions { display: flex; gap: 8px; }
+.machine-queue-actions button { min-height: 34px; padding: 7px 10px; }
 
-.batch-list { margin-top: 13px; border-top: 1px solid var(--line); }
-.batch-row { width: 100%; display: grid; grid-template-columns: minmax(180px, 1.4fr) 110px 130px 150px 24px; align-items: center; gap: 16px; padding: 14px 8px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; text-align: left; }
+.batch-list { margin-top: 4px; }
+.batch-list-item { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: stretch; border-bottom: 1px solid var(--line); }
+.batch-selector { display: grid; place-items: center; margin: 0; }
+.batch-selector input:disabled { opacity: 0.35; }
+.batch-row { width: 100%; display: grid; grid-template-columns: minmax(180px, 1.4fr) 100px 120px 92px 138px 22px; align-items: center; gap: 13px; padding: 14px 8px; border: 0; background: transparent; color: inherit; text-align: left; }
 .batch-row:hover, .batch-row.selected { background: #eaf1ed; }
 .batch-row strong { display: block; font-size: 13px; }
 .batch-row small { display: block; margin-top: 4px; color: var(--muted); }
@@ -285,6 +297,13 @@ button.matrix-cell:hover { filter: brightness(0.96); box-shadow: 0 0 0 2px rgba(
 .status-ready { background: var(--blue-soft); color: #285978; }
 .status-published { background: var(--green-soft); color: var(--green-dark); }
 .status-failed { background: #f9e5e3; color: var(--red); }
+.machine-state { width: fit-content; padding: 3px 6px; border: 1px solid transparent; border-radius: 4px; font-size: 10px; font-weight: 750; white-space: nowrap; }
+.machine-none { color: #7a8881; }
+.machine-queued { border-color: #b8c8d2; background: #eef4f7; color: #365f75; }
+.machine-running { border-color: #8eb0c4; background: #e4f0f6; color: #285978; }
+.machine-succeeded { border-color: #afd0ba; background: #e5f2e8; color: #23643b; }
+.machine-failed { border-color: #e2b7b2; background: #f9e5e3; color: var(--red); }
+.machine-skipped { border-color: #d2d8d5; background: #f1f3f2; color: #5e6a64; }
 .empty-state { padding: 30px 8px; color: var(--muted); text-align: center; }
 
 .review-workspace { margin-top: 34px; padding-top: 27px; border-top: 3px solid #cbd6d0; }
@@ -332,6 +351,7 @@ button.matrix-cell:hover { filter: brightness(0.96); box-shadow: 0 0 0 2px rgba(
 .machine-result strong { font-size: 12px; }
 .machine-result p { margin: 4px 0 0; color: #37556a; font-size: 11px; line-height: 1.45; }
 .machine-result .machine-priority { color: #704700; font-weight: 700; }
+.machine-result .secondary-button { margin-top: 10px; min-height: 32px; padding: 6px 9px; }
 .machine-result details { font-size: 11px; }
 .machine-result summary { cursor: pointer; color: #285978; font-weight: 750; }
 .machine-result ul { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
@@ -411,7 +431,9 @@ button.matrix-cell:hover { filter: brightness(0.96); box-shadow: 0 0 0 2px rgba(
   .metrics { grid-template-columns: repeat(2, 1fr); }
   .metric:nth-child(2) { border-right: 0; }
   .metric:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
-  .batch-row { grid-template-columns: 1fr 90px 120px 22px; }
+  .machine-queue-toolbar { grid-template-columns: 1fr auto; }
+  .machine-queue-state { grid-column: 1 / -1; grid-row: 2; }
+  .batch-row { grid-template-columns: 1fr 90px 90px 120px 22px; }
   .batch-row .batch-date { display: none; }
   .review-header { align-items: flex-start; flex-direction: column; }
   .cover-grid { grid-template-columns: repeat(3, minmax(100px, 1fr)); }
@@ -455,8 +477,16 @@ button.matrix-cell:hover { filter: brightness(0.96); box-shadow: 0 0 0 2px rgba(
   .trend-chart, .trend-chart svg { min-height: 230px; height: 230px; }
   .upload-panel, .workspace { padding: 22px 16px; }
   .queue-header { align-items: flex-start; flex-direction: column; }
+  .segmented-control { width: 100%; overflow-x: auto; }
+  .segment { flex: 1 0 auto; }
+  .machine-queue-toolbar { grid-template-columns: 1fr; align-items: stretch; gap: 10px; }
+  .machine-queue-selection { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .machine-queue-state { grid-column: auto; grid-row: auto; flex-wrap: wrap; white-space: normal; }
+  .machine-queue-actions { width: 100%; }
+  .machine-queue-actions button { flex: 1; }
+  .batch-list-item { grid-template-columns: 30px minmax(0, 1fr); }
   .batch-row { grid-template-columns: 1fr auto 20px; gap: 9px; }
-  .batch-row .batch-count, .batch-row .batch-date { display: none; }
+  .batch-row .batch-count, .batch-row .batch-date, .batch-row .machine-state { display: none; }
   .review-actions { width: 100%; flex-direction: column; }
   .review-actions button { width: 100%; }
   .photo-grid { grid-template-columns: 1fr; }

@@ -2,7 +2,7 @@ const state = {
   dashboard: null,
   sites: [],
   selectedBatch: null,
-  filter: "active",
+  filter: "review",
   uploadToken: null,
   uploadSuggestion: null,
   integrityRequiresOverride: false,
@@ -10,6 +10,11 @@ const state = {
   reviewView: "photos",
   machineReviewConfig: null,
   machineReviewLoading: false,
+  machineQueue: null,
+  machineQueueLoading: false,
+  machineQueueSubmitting: false,
+  machineQueueRefreshTimer: null,
+  machineSelected: new Set(),
   appView: "dashboard",
   publishedData: null,
   publishedLoading: false,
@@ -119,6 +124,12 @@ function setAppView(view) {
     scheduleDashboardRefresh();
   } else {
     clearTimeout(state.dashboardRefreshTimer);
+  }
+  if (view === "ingestion") {
+    Promise.all([loadDashboard({silent: true}), loadMachineQueue({silent: true})]);
+    scheduleMachineQueueRefresh();
+  } else {
+    clearTimeout(state.machineQueueRefreshTimer);
   }
   if (view === "published") loadPublishedData();
   iconRefresh();
@@ -481,40 +492,215 @@ async function loadMachineReviewConfig() {
   state.machineReviewConfig = await api("/api/machine-review/config");
 }
 
+async function loadMachineQueue({silent = false} = {}) {
+  if (state.machineQueueLoading) return;
+  state.machineQueueLoading = true;
+  try {
+    state.machineQueue = await api("/api/machine-review/jobs");
+    renderMachineQueueToolbar();
+  } catch (error) {
+    if (!silent) showToast(error.message, true);
+  } finally {
+    state.machineQueueLoading = false;
+  }
+}
+
+function scheduleMachineQueueRefresh() {
+  clearTimeout(state.machineQueueRefreshTimer);
+  if (state.appView !== "ingestion") return;
+  const counts = state.machineQueue?.counts || {};
+  const active = (counts.queued || 0) + (counts.running || 0);
+  state.machineQueueRefreshTimer = setTimeout(async () => {
+    if (!document.hidden) {
+      await Promise.all([
+        loadMachineQueue({silent: true}),
+        loadDashboard({silent: true}),
+      ]);
+    }
+    scheduleMachineQueueRefresh();
+  }, active ? 3000 : 15000);
+}
+
 function filteredBatches() {
   const batches = state.dashboard?.batches || [];
+  if (state.filter === "review") {
+    return batches.filter((batch) => (batch.completion_status || "not_started") !== "reviewed");
+  }
   if (state.filter === "published") return batches.filter((batch) => batch.status === "published");
   if (state.filter === "active") return batches.filter((batch) => batch.status !== "published");
   return batches;
 }
 
+function machineQueueEligibility(batch) {
+  const config = state.machineReviewConfig || {};
+  const photoCount = Number(batch.stored_photo_count ?? batch.photo_count ?? 0);
+  const verifiedCount = Number(batch.reviewed_count || 0);
+  if (!config.available) return {eligible: false, reason: config.reason || "Machine review unavailable"};
+  if (!photoCount || verifiedCount !== photoCount) {
+    return {eligible: false, reason: "Finish photo-role review first"};
+  }
+  if (batch.completion_status === "reviewed") {
+    return {eligible: false, reason: "Human review already complete"};
+  }
+  if (["queued", "running"].includes(batch.machine_review_status)) {
+    return {eligible: false, reason: "Already in the machine queue"};
+  }
+  if (batch.machine_draft_available) {
+    return {eligible: false, reason: "Machine draft already available"};
+  }
+  return {eligible: true, reason: ""};
+}
+
+function machineStatus(batch) {
+  const status = batch.machine_review_status;
+  if (status === "queued") return {status, label: "Queued"};
+  if (status === "running") return {status, label: "Reviewing"};
+  if (status === "failed") return {status, label: "Machine failed"};
+  if (status === "skipped") return {status, label: "Skipped"};
+  if (status === "succeeded" || batch.machine_draft_available) {
+    return {status: "succeeded", label: "Draft ready"};
+  }
+  return null;
+}
+
+function updateMachineSelectionControls() {
+  const count = state.machineSelected.size;
+  const countLabel = document.querySelector("#machine-selection-count");
+  const queueButton = document.querySelector("#queue-machine-button");
+  const selectVisible = document.querySelector("#select-visible-batches");
+  if (!countLabel || !queueButton || !selectVisible) return;
+  countLabel.textContent = `${count} selected`;
+  queueButton.disabled = !count || state.machineQueueLoading || state.machineQueueSubmitting
+    || !state.machineReviewConfig?.available;
+  const eligibleVisible = filteredBatches().filter((batch) => machineQueueEligibility(batch).eligible);
+  const selectedVisible = eligibleVisible.filter((batch) => state.machineSelected.has(batch.batch_id));
+  selectVisible.disabled = !eligibleVisible.length;
+  selectVisible.checked = Boolean(eligibleVisible.length) && selectedVisible.length === eligibleVisible.length;
+  selectVisible.indeterminate = selectedVisible.length > 0 && selectedVisible.length < eligibleVisible.length;
+}
+
+function renderMachineQueueToolbar() {
+  const counts = state.machineQueue?.counts || {};
+  document.querySelector("#machine-queued-count").textContent = counts.queued || 0;
+  document.querySelector("#machine-running-count").textContent = counts.running || 0;
+  document.querySelector("#machine-ready-count").textContent = counts.succeeded || 0;
+  document.querySelector("#machine-failed-count").textContent = counts.failed || 0;
+  const retry = document.querySelector("#retry-machine-button");
+  retry.classList.toggle("hidden", !(counts.failed > 0));
+  retry.disabled = state.machineQueueLoading || state.machineQueueSubmitting
+    || !state.machineReviewConfig?.available;
+  updateMachineSelectionControls();
+  iconRefresh();
+}
+
+async function queueSelectedMachineReviews() {
+  const batchIds = [...state.machineSelected];
+  if (!batchIds.length || state.machineQueueSubmitting) return;
+  state.machineQueueSubmitting = true;
+  updateMachineSelectionControls();
+  try {
+    const result = await api("/api/machine-review/jobs", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({batch_ids: batchIds, force: false}),
+    });
+    const selectedJob = result.created.find(
+      (job) => job.batch_id === state.selectedBatch?.batch_id,
+    );
+    if (selectedJob) {
+      state.selectedBatch.latest_machine_review_job = selectedJob;
+      renderMachineReview();
+    }
+    state.machineSelected.clear();
+    await Promise.all([loadMachineQueue({silent: true}), loadDashboard({silent: true})]);
+    const skipped = result.skipped_count ? ` ${result.skipped_count} skipped.` : "";
+    showToast(`${result.created_count} observation${result.created_count === 1 ? "" : "s"} queued.${skipped}`);
+    scheduleMachineQueueRefresh();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    state.machineQueueSubmitting = false;
+    updateMachineSelectionControls();
+  }
+}
+
+async function retryFailedMachineReviews() {
+  if (state.machineQueueSubmitting) return;
+  state.machineQueueSubmitting = true;
+  renderMachineQueueToolbar();
+  try {
+    const result = await api("/api/machine-review/jobs/retry-failed", {method: "POST"});
+    if (state.selectedBatch?.latest_machine_review_job?.status === "failed") {
+      state.selectedBatch.latest_machine_review_job.status = "queued";
+      state.selectedBatch.latest_machine_review_job.error_message = "";
+      renderMachineReview();
+    }
+    await Promise.all([loadMachineQueue({silent: true}), loadDashboard({silent: true})]);
+    showToast(`${result.queued_count} failed job${result.queued_count === 1 ? "" : "s"} returned to the queue.`);
+    scheduleMachineQueueRefresh();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    state.machineQueueSubmitting = false;
+    renderMachineQueueToolbar();
+  }
+}
+
 function renderBatches() {
   const target = document.querySelector("#batch-list");
   const batches = filteredBatches();
+  const allBatches = state.dashboard?.batches || [];
+  for (const batchId of [...state.machineSelected]) {
+    const batch = allBatches.find((item) => item.batch_id === batchId);
+    if (!batch || !machineQueueEligibility(batch).eligible) state.machineSelected.delete(batchId);
+  }
   if (!batches.length) {
-    const message = state.filter === "active"
-      ? "No open batches. Stage a photo batch to begin."
-      : "No batches in this view.";
+    const message = state.filter === "review"
+      ? "No observations need review."
+      : (state.filter === "active" ? "No open batches. Stage a photo batch to begin." : "No batches in this view.");
     target.innerHTML = `<div class="empty-state">${message}</div>`;
+    updateMachineSelectionControls();
     return;
   }
   target.innerHTML = batches.map((batch) => {
     const selected = state.selectedBatch?.batch_id === batch.batch_id ? " selected" : "";
+    const eligibility = machineQueueEligibility(batch);
+    const checked = state.machineSelected.has(batch.batch_id) ? " checked" : "";
+    const disabled = eligibility.eligible ? "" : " disabled";
+    const machine = machineStatus(batch);
+    const machineBadge = machine
+      ? `<span class="machine-state machine-${escapeHtml(machine.status)}">${escapeHtml(machine.label)}</span>`
+      : '<span class="machine-state machine-none">Not queued</span>';
     return `
-      <button class="batch-row${selected}" data-batch-id="${escapeHtml(batch.batch_id)}" type="button">
-        <span>
-          <strong>${escapeHtml(siteLabel(batch.site_id))}</strong>
-          <small>${escapeHtml(batch.batch_id)}</small>
-        </span>
-        <span class="batch-date">${escapeHtml(batch.observation_date)}</span>
-        <span class="batch-count">${batch.reviewed_count || 0} / ${batch.photo_count} reviewed</span>
-        <span class="status-badge status-${escapeHtml(batch.status)}">${escapeHtml(statusLabel(batch.status))}</span>
-        <i data-lucide="chevron-right" aria-hidden="true"></i>
-      </button>`;
+      <div class="batch-list-item">
+        <label class="batch-selector" title="${escapeHtml(eligibility.reason || "Select for machine review")}">
+          <input class="machine-batch-select" data-batch-id="${escapeHtml(batch.batch_id)}" type="checkbox"${checked}${disabled}>
+          <span class="visually-hidden">Select ${escapeHtml(siteLabel(batch.site_id))} on ${escapeHtml(batch.observation_date)}</span>
+        </label>
+        <button class="batch-row${selected}" data-batch-id="${escapeHtml(batch.batch_id)}" type="button">
+          <span>
+            <strong>${escapeHtml(siteLabel(batch.site_id))}</strong>
+            <small>${escapeHtml(batch.batch_id)}</small>
+          </span>
+          <span class="batch-date">${escapeHtml(batch.observation_date)}</span>
+          <span class="batch-count">${batch.reviewed_count || 0} / ${batch.photo_count} reviewed</span>
+          ${machineBadge}
+          <span class="status-badge status-${escapeHtml(batch.status)}">${escapeHtml(statusLabel(batch.status))}</span>
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </button>
+      </div>`;
   }).join("");
   target.querySelectorAll(".batch-row").forEach((row) => {
     row.addEventListener("click", () => selectBatch(row.dataset.batchId));
   });
+  target.querySelectorAll(".machine-batch-select").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) state.machineSelected.add(checkbox.dataset.batchId);
+      else state.machineSelected.delete(checkbox.dataset.batchId);
+      updateMachineSelectionControls();
+    });
+  });
+  updateMachineSelectionControls();
   iconRefresh();
 }
 
@@ -581,9 +767,15 @@ function fieldLabel(name) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function applyMachineDraft(result) {
+function applyMachineDraft(result, {confirmOverwrite = false} = {}) {
   const values = result?.draft?.values || {};
   const form = document.querySelector("#observation-review-form");
+  if (confirmOverwrite && state.selectedBatch?.observation_review) {
+    const proceed = window.confirm(
+      "Load the machine draft into the form? Suggested values will replace matching form fields, but nothing is saved until you choose Save draft or Complete review.",
+    );
+    if (!proceed) return false;
+  }
   form.querySelectorAll(".machine-suggested").forEach((field) => field.classList.remove("machine-suggested"));
   Object.entries(values).forEach(([name, value]) => {
     if (value === null || value === undefined || name === "completion_status") return;
@@ -592,6 +784,15 @@ function applyMachineDraft(result) {
     field.value = typeof value === "boolean" ? String(value) : value;
     field.classList.add("machine-suggested");
   });
+  return true;
+}
+
+function loadLatestMachineDraft() {
+  const result = state.selectedBatch?.latest_machine_review;
+  if (!result) return;
+  if (applyMachineDraft(result, {confirmOverwrite: true})) {
+    showToast("Machine draft loaded. Review and edit it before saving.");
+  }
 }
 
 function renderMachineReview() {
@@ -601,14 +802,22 @@ function renderMachineReview() {
   const configState = document.querySelector("#machine-config-state");
   const photoReviewComplete = batch.photos.every((photo) => photo.review_status === "verified");
   const available = Boolean(config.available);
-  button.disabled = !available || !photoReviewComplete || state.machineReviewLoading;
+  const job = batch.latest_machine_review_job;
+  const jobActive = ["queued", "running"].includes(job?.status);
+  button.disabled = !available || !photoReviewComplete || state.machineReviewLoading || jobActive;
   button.innerHTML = state.machineReviewLoading
     ? '<i data-lucide="loader-circle" aria-hidden="true"></i> Reviewing photos...'
-    : '<i data-lucide="scan-search" aria-hidden="true"></i> Generate machine draft';
+    : `<i data-lucide="scan-search" aria-hidden="true"></i> ${batch.latest_machine_review ? "Generate another draft" : "Generate machine draft"}`;
   if (!available) {
     configState.textContent = config.reason || "Machine review is not configured.";
   } else if (!photoReviewComplete) {
     configState.textContent = "Verify every photo role before requesting a draft.";
+  } else if (job?.status === "queued") {
+    configState.textContent = "Queued for machine review.";
+  } else if (job?.status === "running") {
+    configState.textContent = "Machine review is running.";
+  } else if (job?.status === "failed") {
+    configState.textContent = job.error_message || "The latest machine review failed.";
   } else {
     configState.textContent = `${config.provider} | ${config.model}`;
   }
@@ -667,6 +876,10 @@ function renderObservationReview() {
 
 async function generateMachineReview() {
   if (!state.selectedBatch || state.machineReviewLoading) return;
+  if (
+    state.selectedBatch.observation_review?.completion_status === "reviewed"
+    && !window.confirm("This observation already has a completed human review. Generate a separate machine suggestion anyway?")
+  ) return;
   state.machineReviewLoading = true;
   renderMachineReview();
   iconRefresh();
@@ -677,6 +890,7 @@ async function generateMachineReview() {
     );
     state.selectedBatch.latest_machine_review = result;
     applyMachineDraft(result);
+    await loadDashboard({silent: true});
     renderMachineReview();
     showToast("Machine draft applied. Review and edit it before saving.");
   } catch (error) {
@@ -1043,6 +1257,17 @@ async function initialize() {
   document.querySelector("#accept-button").addEventListener("click", acceptSuggestions);
   document.querySelector("#publish-button").addEventListener("click", publishBatch);
   document.querySelector("#machine-review-button").addEventListener("click", generateMachineReview);
+  document.querySelector("#apply-machine-draft-button").addEventListener("click", loadLatestMachineDraft);
+  document.querySelector("#queue-machine-button").addEventListener("click", queueSelectedMachineReviews);
+  document.querySelector("#retry-machine-button").addEventListener("click", retryFailedMachineReviews);
+  document.querySelector("#select-visible-batches").addEventListener("change", (event) => {
+    filteredBatches().forEach((batch) => {
+      if (!machineQueueEligibility(batch).eligible) return;
+      if (event.target.checked) state.machineSelected.add(batch.batch_id);
+      else state.machineSelected.delete(batch.batch_id);
+    });
+    renderBatches();
+  });
   document.querySelector("#observation-review-form").addEventListener("submit", saveObservationReview);
   document.querySelector("#refresh-dashboard-button").addEventListener("click", async () => {
     await loadDashboard();
@@ -1072,7 +1297,14 @@ async function initialize() {
   iconRefresh();
   try {
     await Promise.all([loadSites(), loadMachineReviewConfig()]);
-    await loadDashboard();
+    await Promise.all([loadDashboard(), loadMachineQueue()]);
+    if (
+      state.machineReviewConfig?.available
+      && ((state.machineQueue?.counts?.queued || 0) > 0)
+    ) {
+      await api("/api/machine-review/jobs/process", {method: "POST"});
+      scheduleMachineQueueRefresh();
+    }
     scheduleDashboardRefresh();
   } catch (error) {
     document.querySelector("#service-state").classList.add("offline");
