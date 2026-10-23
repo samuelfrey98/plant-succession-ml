@@ -1,10 +1,13 @@
 import base64
 import csv
 import io
+import json
 import shutil
+import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from PIL import Image
@@ -24,7 +27,9 @@ from plant_succession.ingestion import (  # noqa: E402
     assess_batch_integrity,
     extract_photo_metadata,
     infer_photo_type,
+    read_csv,
     suggest_batch_metadata,
+    write_csv,
 )
 from plant_succession.google_sheets import GoogleSheetsSyncError  # noqa: E402
 from plant_succession.app import initialize_public_data, valid_basic_auth  # noqa: E402
@@ -416,6 +421,63 @@ class IngestionServiceTests(unittest.TestCase):
             (target / "sites.csv").read_text(encoding="utf-8"),
             "version\nrepo\n",
         )
+
+    def test_canonical_store_is_versioned_and_exports_over_changed_csvs(self):
+        status = self.service.canonical_store_status()
+        self.assertEqual(status["schema_version"], 4)
+        self.assertEqual(status["expected_schema_version"], 4)
+        self.assertEqual(
+            {migration["version"] for migration in status["migrations"]}, {1, 2, 3, 4}
+        )
+        self.assertIn(
+            "observations.csv",
+            {dataset["filename"] for dataset in status["datasets"]},
+        )
+        self.assertNotIn(
+            "analysis_ready_observations.csv",
+            {dataset["filename"] for dataset in status["datasets"]},
+        )
+
+        path = self.public_dir / "observations.csv"
+        fields, rows = read_csv(path)
+        canonical_note = rows[0]["notes"]
+        rows[0]["notes"] = "This manual CSV edit is not canonical."
+        write_csv(path, fields, rows)
+
+        _, stored_rows = self.service.read_canonical_dataset("observations.csv")
+        self.assertEqual(stored_rows[0]["notes"], canonical_note)
+
+        result = self.service.export_public_data()
+        self.assertEqual(result["row_counts"]["observations.csv"], len(rows))
+        self.assertEqual(result["row_counts"]["analysis_ready_observations.csv"], len(rows))
+        self.assertEqual(csv_rows(path)[0]["notes"], canonical_note)
+
+        reloaded = IngestionService(self.service.paths)
+        self.assertEqual(len(reloaded.canonical_store_status()["migrations"]), 4)
+
+    def test_explicit_import_and_online_backup(self):
+        source = self.root / "replacement"
+        shutil.copytree(self.public_dir, source)
+        observations_path = source / "observations.csv"
+        fields, rows = read_csv(observations_path)
+        rows[0]["notes"] = "Explicitly imported replacement."
+        write_csv(observations_path, fields, rows)
+
+        with self.assertRaisesRegex(IngestionError, "already initialized"):
+            self.service.import_public_exports(source)
+        result = self.service.import_public_exports(source, replace=True)
+        self.assertEqual(result["dataset_count"], len(list(source.glob("*.csv"))) - 1)
+        _, stored_rows = self.service.read_canonical_dataset("observations.csv")
+        self.assertEqual(stored_rows[0]["notes"], "Explicitly imported replacement.")
+
+        backup = self.service.backup_database(self.root / "backups")
+        backup_path = Path(backup["path"])
+        self.assertTrue(backup_path.exists())
+        self.assertEqual(backup["schema_versions"], [1, 2, 3, 4])
+        with closing(sqlite3.connect(backup_path)) as connection:
+            self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        manifest = json.loads(Path(backup["manifest"]).read_text(encoding="utf-8"))
+        self.assertEqual(manifest["sha256"], backup["sha256"])
 
     def test_basic_auth_validation(self):
         valid = "Basic " + base64.b64encode(b"samuel:correct horse").decode("ascii")
