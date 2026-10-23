@@ -425,6 +425,46 @@ class IngestionServiceTests(unittest.TestCase):
         self.assertFalse(valid_basic_auth("Basic not-base64", "samuel", "correct horse"))
         self.assertFalse(valid_basic_auth(None, "samuel", "correct horse"))
 
+    def test_dashboard_reports_quality_matrix_and_longitudinal_data(self):
+        batch = self.service.create_batch(
+            "3",
+            "2026-10-22",
+            "Dashboard test batch.",
+            [("wide.jpg", image_bytes((40, 90, 50)))],
+        )
+        batch = self.service.accept_explicit_suggestions(batch["batch_id"])
+        batch = self.service.save_observation_review(
+            batch["batch_id"],
+            {
+                "estimated_total_vegetation_cover_pct": 42,
+                "completion_status": "partially_reviewed",
+                "completeness_notes": "Dominant taxon still needs review.",
+            },
+            finalize=True,
+        )
+        self.service.publish_batch(batch["batch_id"])
+
+        dashboard = self.service.dashboard()
+
+        self.assertEqual(dashboard["summary"]["batch_count"], 1)
+        self.assertEqual(dashboard["summary"]["photo_count"], 1)
+        self.assertEqual(dashboard["summary"]["verified_photo_count"], 1)
+        self.assertEqual(dashboard["review_status_counts"], {"partially_reviewed": 1})
+        self.assertEqual(dashboard["review_provenance_counts"], {"human": 1})
+        self.assertEqual(dashboard["quality"]["missing_dominant_taxon"], 1)
+        self.assertEqual(dashboard["quality"].get("missing_vegetation_cover", 0), 0)
+        self.assertEqual(dashboard["site_matrix"]["dates"], ["2026-10-22"])
+        site = next(
+            row for row in dashboard["site_matrix"]["rows"] if row["site_id"] == "3"
+        )
+        self.assertEqual(site["cells"][0]["batch_id"], batch["batch_id"])
+        series = next(
+            row for row in dashboard["longitudinal"]["sites"] if row["site_id"] == "3"
+        )
+        self.assertEqual(series["points"][0]["vegetation_cover_pct"], 42)
+        self.assertEqual(dashboard["issues"][0]["severity"], "follow_up")
+        self.assertIn("Dominant taxon is missing", dashboard["issues"][0]["reasons"])
+
     def test_metadata_suggestion_votes_for_nearest_site_and_capture_date(self):
         anchors = [
             SiteAnchor("1", 40.00000, -75.00000),

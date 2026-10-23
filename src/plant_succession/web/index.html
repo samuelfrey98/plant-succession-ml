@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Review queue for Plant Succession field-photo ingestion.">
     <title>Plant Succession Ingest</title>
-    <link rel="stylesheet" href="/assets/styles.css?v=20261021-1">
+    <link rel="stylesheet" href="/assets/styles.css?v=20261022-1">
     <script defer src="/assets/lucide.min.js"></script>
-    <script defer src="/assets/app.js?v=20261021-1"></script>
+    <script defer src="/assets/app.js?v=20261022-1"></script>
   </head>
   <body>
     <header class="app-header">
@@ -17,7 +17,11 @@
         <p>Stage, review, and publish field-photo batches</p>
       </div>
       <nav class="app-nav" aria-label="Application sections">
-        <button class="app-nav-button active" data-app-view="ingestion" type="button">
+        <button class="app-nav-button active" data-app-view="dashboard" type="button">
+          <i data-lucide="layout-dashboard" aria-hidden="true"></i>
+          Dashboard
+        </button>
+        <button class="app-nav-button" data-app-view="ingestion" type="button">
           <i data-lucide="inbox" aria-hidden="true"></i>
           Ingestion
         </button>
@@ -32,7 +36,94 @@
       </div>
     </header>
 
-    <main class="shell" id="ingestion-shell">
+    <main class="dashboard-shell" id="dashboard-shell">
+      <section class="dashboard-header">
+        <div>
+          <p class="eyebrow">Pipeline monitor</p>
+          <h2>Field data dashboard</h2>
+          <p id="dashboard-freshness">Loading current state...</p>
+        </div>
+        <div class="dashboard-actions">
+          <span class="live-indicator"><span></span>Live</span>
+          <button class="icon-button" id="refresh-dashboard-button" type="button" title="Refresh dashboard now" aria-label="Refresh dashboard now">
+            <i data-lucide="refresh-cw" aria-hidden="true"></i>
+          </button>
+        </div>
+      </section>
+
+      <section class="dashboard-metrics" aria-label="Dataset summary">
+        <div><span>Observations</span><strong id="dashboard-observations">0</strong><small id="dashboard-sites">0 sites</small></div>
+        <div><span>Photos</span><strong id="dashboard-photos">0</strong><small id="dashboard-verified">0 verified</small></div>
+        <div><span>Partial reviews</span><strong id="dashboard-partial">0</strong><small id="dashboard-reviewed">0 fully reviewed</small></div>
+        <div><span>Open photo labels</span><strong id="dashboard-unresolved">0</strong><small id="dashboard-active">0 active batches</small></div>
+        <div><span>Published</span><strong id="dashboard-published">0</strong><small id="dashboard-last-published">Not yet</small></div>
+      </section>
+
+      <div class="dashboard-grid">
+        <section class="dashboard-band" aria-labelledby="quality-title">
+          <div class="dashboard-band-heading">
+            <div>
+              <p class="eyebrow">Review queue</p>
+              <h3 id="quality-title">Data quality</h3>
+            </div>
+            <strong class="band-count" id="dashboard-issue-count">0 batches</strong>
+          </div>
+          <div class="quality-breakdown" id="quality-breakdown"></div>
+          <div class="issue-list" id="dashboard-issues"></div>
+        </section>
+
+        <section class="dashboard-band" aria-labelledby="pipeline-title">
+          <div class="dashboard-band-heading">
+            <div>
+              <p class="eyebrow">Current state</p>
+              <h3 id="pipeline-title">Pipeline and provenance</h3>
+            </div>
+          </div>
+          <div class="pipeline-breakdown" id="pipeline-breakdown"></div>
+          <div class="provenance-section">
+            <span>Observation review provenance</span>
+            <div class="provenance-bar" id="provenance-bar" aria-label="Observation review provenance"></div>
+            <div class="provenance-legend" id="provenance-legend"></div>
+          </div>
+          <dl class="freshness-list">
+            <div><dt>Latest batch</dt><dd id="dashboard-latest-batch">Not yet</dd></div>
+            <div><dt>Latest Sheets sync</dt><dd id="dashboard-latest-sync">Not configured</dd></div>
+          </dl>
+        </section>
+      </div>
+
+      <section class="dashboard-band dashboard-wide-band" aria-labelledby="matrix-title">
+        <div class="dashboard-band-heading">
+          <div>
+            <p class="eyebrow">Coverage</p>
+            <h3 id="matrix-title">Site by observation date</h3>
+          </div>
+          <div class="matrix-legend" aria-label="Matrix status legend">
+            <span><i class="matrix-key matrix-key-reviewed"></i>Reviewed</span>
+            <span><i class="matrix-key matrix-key-partial"></i>Partial</span>
+            <span><i class="matrix-key matrix-key-open"></i>Open</span>
+          </div>
+        </div>
+        <div class="matrix-scroll" id="site-matrix"></div>
+      </section>
+
+      <section class="dashboard-band dashboard-wide-band" aria-labelledby="trend-title">
+        <div class="dashboard-band-heading trend-heading">
+          <div>
+            <p class="eyebrow">Longitudinal signal</p>
+            <h3 id="trend-title">Vegetation cover</h3>
+          </div>
+          <label class="compact-select" for="dashboard-site-filter">
+            <span>Monitoring site</span>
+            <select id="dashboard-site-filter"></select>
+          </label>
+        </div>
+        <div class="trend-chart" id="vegetation-chart"></div>
+        <div class="trend-table-wrap" id="vegetation-table"></div>
+      </section>
+    </main>
+
+    <main class="shell hidden" id="ingestion-shell">
       <aside class="upload-panel">
         <div class="section-heading">
           <div>

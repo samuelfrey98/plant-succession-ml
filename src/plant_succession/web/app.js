@@ -10,9 +10,12 @@ const state = {
   reviewView: "photos",
   machineReviewConfig: null,
   machineReviewLoading: false,
-  appView: "ingestion",
+  appView: "dashboard",
   publishedData: null,
   publishedLoading: false,
+  dashboardLoading: false,
+  dashboardSiteFilter: "",
+  dashboardRefreshTimer: null,
 };
 
 const photoTypes = [
@@ -77,6 +80,14 @@ function formatDateTime(value) {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
+function formatShortDate(value) {
+  if (!value) return "-";
+  const parsed = new Date(`${value}T12:00:00`);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toLocaleDateString(undefined, {month: "short", day: "numeric"});
+}
+
 function publicationStatus(status) {
   return {
     succeeded: "Succeeded",
@@ -97,11 +108,18 @@ function exportLabel(filename) {
 
 function setAppView(view) {
   state.appView = view;
+  document.querySelector("#dashboard-shell").classList.toggle("hidden", view !== "dashboard");
   document.querySelector("#ingestion-shell").classList.toggle("hidden", view !== "ingestion");
   document.querySelector("#published-shell").classList.toggle("hidden", view !== "published");
   document.querySelectorAll(".app-nav-button").forEach((button) => {
     button.classList.toggle("active", button.dataset.appView === view);
   });
+  if (view === "dashboard") {
+    loadDashboard({silent: Boolean(state.dashboard)});
+    scheduleDashboardRefresh();
+  } else {
+    clearTimeout(state.dashboardRefreshTimer);
+  }
   if (view === "published") loadPublishedData();
   iconRefresh();
 }
@@ -212,14 +230,251 @@ async function loadSites() {
   ).join("");
 }
 
-async function loadDashboard() {
-  state.dashboard = await api("/api/dashboard");
-  const counts = state.dashboard.counts;
-  document.querySelector("#metric-review").textContent = counts.needs_review;
-  document.querySelector("#metric-observations").textContent = counts.observation_review;
-  document.querySelector("#metric-ready").textContent = counts.ready;
-  document.querySelector("#metric-published").textContent = counts.published;
-  renderBatches();
+function provenanceLabel(value) {
+  return {
+    human: "Human",
+    ai_assistant: "Assistant",
+    model: "Model",
+    legacy_unknown: "Pre-tracking",
+    rule: "Rule",
+  }[value] || value.replaceAll("_", " ");
+}
+
+function bindDashboardBatchLinks() {
+  document.querySelectorAll("[data-open-batch]").forEach((element) => {
+    element.addEventListener("click", () => openBatchFromDashboard(element.dataset.openBatch));
+  });
+}
+
+async function openBatchFromDashboard(batchId) {
+  if (!batchId) return;
+  setAppView("ingestion");
+  await selectBatch(batchId);
+}
+
+function renderQualityDashboard(data) {
+  const quality = data.quality || {};
+  const breakdown = [
+    ["Partial reviews", quality.partial_reviews || 0],
+    ["Missing cover", quality.missing_vegetation_cover || 0],
+    ["Missing taxon", quality.missing_dominant_taxon || 0],
+    ["Integrity flags", quality.integrity_attention || 0],
+  ];
+  document.querySelector("#quality-breakdown").innerHTML = breakdown.map(([label, count]) => `
+    <div><strong>${escapeHtml(count)}</strong><span>${escapeHtml(label)}</span></div>
+  `).join("");
+  document.querySelector("#dashboard-issue-count").textContent = `${quality.issue_batch_count || 0} batches`;
+
+  const issues = (data.issues || []).slice(0, 8);
+  document.querySelector("#dashboard-issues").innerHTML = issues.map((issue) => `
+    <button class="issue-row issue-${escapeHtml(issue.severity)}" data-open-batch="${escapeHtml(issue.batch_id)}" type="button">
+      <span class="issue-marker" aria-hidden="true"></span>
+      <span class="issue-identity">
+        <strong>Site ${escapeHtml(issue.site_id)} · ${escapeHtml(formatShortDate(issue.observation_date))}</strong>
+        <small>${escapeHtml(issue.site_name)}</small>
+      </span>
+      <span class="issue-reasons">${escapeHtml(issue.reasons.join(" · "))}</span>
+      <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+    </button>
+  `).join("") || '<div class="empty-state">No data-quality exceptions.</div>';
+}
+
+function renderPipelineDashboard(data) {
+  const counts = data.counts || {};
+  const statuses = [
+    ["needs_review", "Photo review"],
+    ["observation_review", "Observation review"],
+    ["ready", "Ready"],
+    ["published", "Published"],
+    ["failed", "Failed"],
+  ];
+  const total = Math.max(1, statuses.reduce((sum, [key]) => sum + (counts[key] || 0), 0));
+  document.querySelector("#pipeline-breakdown").innerHTML = statuses.map(([key, label]) => `
+    <div class="pipeline-row">
+      <span>${escapeHtml(label)}</span>
+      <div><i class="pipeline-fill pipeline-${escapeHtml(key)}" style="width: ${((counts[key] || 0) / total) * 100}%"></i></div>
+      <strong>${escapeHtml(counts[key] || 0)}</strong>
+    </div>
+  `).join("");
+
+  const provenance = Object.entries(data.review_provenance_counts || {});
+  const provenanceTotal = Math.max(1, provenance.reduce((sum, [, count]) => sum + count, 0));
+  document.querySelector("#provenance-bar").innerHTML = provenance.map(([actor, count]) => `
+    <i class="provenance-${escapeHtml(actor)}" style="width: ${(count / provenanceTotal) * 100}%" title="${escapeHtml(provenanceLabel(actor))}: ${escapeHtml(count)}"></i>
+  `).join("");
+  document.querySelector("#provenance-legend").innerHTML = provenance.map(([actor, count]) => `
+    <span><i class="provenance-key provenance-${escapeHtml(actor)}"></i>${escapeHtml(provenanceLabel(actor))} <strong>${escapeHtml(count)}</strong></span>
+  `).join("") || '<span>No review provenance recorded</span>';
+
+  const summary = data.summary || {};
+  document.querySelector("#dashboard-latest-batch").textContent = formatDateTime(summary.latest_batch_created_at);
+  const sync = summary.latest_sync;
+  document.querySelector("#dashboard-latest-sync").textContent = sync
+    ? `${publicationStatus(sync.status)} · ${formatDateTime(sync.completed_at || sync.started_at)}`
+    : "Not configured";
+}
+
+function matrixCellClass(cell) {
+  if (!cell) return "matrix-empty";
+  if (!["published", "ready"].includes(cell.pipeline_status)) return "matrix-open";
+  return cell.completion_status === "reviewed" ? "matrix-reviewed" : "matrix-partial";
+}
+
+function matrixCellIcon(cell) {
+  if (!cell) return "minus";
+  if (!["published", "ready"].includes(cell.pipeline_status)) return "clock-3";
+  return cell.completion_status === "reviewed" ? "check" : "circle-dot";
+}
+
+function renderSiteMatrix(data) {
+  const matrix = data.site_matrix || {dates: [], rows: []};
+  const header = matrix.dates.map((date) => `<th scope="col" title="${escapeHtml(date)}">${escapeHtml(formatShortDate(date))}</th>`).join("");
+  const rows = matrix.rows.map((site) => `
+    <tr>
+      <th scope="row"><strong>Site ${escapeHtml(site.site_id)}</strong><small>${escapeHtml(site.site_name)}</small></th>
+      ${site.cells.map((cell) => {
+        if (!cell) return '<td><span class="matrix-cell matrix-empty"><i data-lucide="minus" aria-hidden="true"></i></span></td>';
+        const title = `${cell.date}: ${cell.completion_status}; ${cell.verified_photo_count}/${cell.photo_count} photos verified; ${cell.missing_field_count} key fields missing`;
+        return `<td><button class="matrix-cell ${matrixCellClass(cell)}" data-open-batch="${escapeHtml(cell.batch_id)}" type="button" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"><i data-lucide="${matrixCellIcon(cell)}" aria-hidden="true"></i><small>${escapeHtml(cell.photo_count)}</small></button></td>`;
+      }).join("")}
+    </tr>
+  `).join("");
+  document.querySelector("#site-matrix").innerHTML = matrix.dates.length
+    ? `<table class="matrix-table"><thead><tr><th scope="col">Site</th>${header}</tr></thead><tbody>${rows}</tbody></table>`
+    : '<div class="empty-state">No observation batches registered.</div>';
+}
+
+function chartX(date, minTime, maxTime, left, width) {
+  if (maxTime === minTime) return left + width / 2;
+  return left + ((new Date(`${date}T12:00:00`).getTime() - minTime) / (maxTime - minTime)) * width;
+}
+
+function renderVegetationTrend(data) {
+  const sites = data.longitudinal?.sites || [];
+  const select = document.querySelector("#dashboard-site-filter");
+  if (!state.dashboardSiteFilter || !sites.some((site) => site.site_id === state.dashboardSiteFilter)) {
+    state.dashboardSiteFilter = sites.find((site) => site.points.length)?.site_id || sites[0]?.site_id || "";
+  }
+  select.innerHTML = sites.map((site) => `
+    <option value="${escapeHtml(site.site_id)}" ${site.site_id === state.dashboardSiteFilter ? "selected" : ""}>Site ${escapeHtml(site.site_id)}: ${escapeHtml(site.site_name)}</option>
+  `).join("");
+  const site = sites.find((item) => item.site_id === state.dashboardSiteFilter);
+  const points = site?.points || [];
+  const valid = points.filter((point) => point.vegetation_cover_pct !== null);
+  if (!valid.length) {
+    document.querySelector("#vegetation-chart").innerHTML = '<div class="empty-state">No vegetation-cover estimates for this site.</div>';
+    document.querySelector("#vegetation-table").innerHTML = "";
+    return;
+  }
+
+  const width = 820;
+  const height = 250;
+  const plot = {left: 48, top: 18, width: 748, height: 190};
+  const times = points.map((point) => new Date(`${point.date}T12:00:00`).getTime());
+  const minTime = Math.min(...times);
+  const maxTime = Math.max(...times);
+  const coordinates = valid.map((point) => ({
+    ...point,
+    x: chartX(point.date, minTime, maxTime, plot.left, plot.width),
+    y: plot.top + ((100 - point.vegetation_cover_pct) / 100) * plot.height,
+  }));
+  const grid = [0, 25, 50, 75, 100].map((value) => {
+    const y = plot.top + ((100 - value) / 100) * plot.height;
+    return `<line x1="${plot.left}" y1="${y}" x2="${plot.left + plot.width}" y2="${y}"></line><text x="${plot.left - 9}" y="${y + 4}" text-anchor="end">${value}%</text>`;
+  }).join("");
+  const line = coordinates.map((point) => `${point.x},${point.y}`).join(" ");
+  const circles = coordinates.map((point) => `
+    <circle cx="${point.x}" cy="${point.y}" r="5" tabindex="0" data-open-batch="${escapeHtml(point.batch_id)}">
+      <title>${escapeHtml(point.date)}: ${escapeHtml(point.vegetation_cover_pct)}% vegetation cover</title>
+    </circle>
+  `).join("");
+  const dateLabels = [points[0], points[Math.floor((points.length - 1) / 2)], points[points.length - 1]]
+    .filter((point, index, values) => values.findIndex((value) => value.date === point.date) === index)
+    .map((point) => {
+      const x = chartX(point.date, minTime, maxTime, plot.left, plot.width);
+      return `<text x="${x}" y="${height - 13}" text-anchor="middle">${escapeHtml(formatShortDate(point.date))}</text>`;
+    }).join("");
+  document.querySelector("#vegetation-chart").innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Vegetation cover over time for Site ${escapeHtml(site.site_id)}">
+      <g class="chart-grid">${grid}</g>
+      <polyline class="cover-line" points="${line}"></polyline>
+      <g class="cover-points">${circles}</g>
+      <g class="chart-labels">${dateLabels}</g>
+    </svg>`;
+  document.querySelector("#vegetation-table").innerHTML = `
+    <table class="trend-table">
+      <thead><tr><th>Date</th><th>Vegetation</th><th>Bare ground</th><th>Gravel / rock</th><th>Review</th><th><span class="visually-hidden">Open batch</span></th></tr></thead>
+      <tbody>${points.map((point) => `
+        <tr>
+          <td>${escapeHtml(point.date)}</td>
+          <td>${point.vegetation_cover_pct === null ? "-" : `${escapeHtml(point.vegetation_cover_pct)}%`}</td>
+          <td>${point.bare_ground_pct === null ? "-" : `${escapeHtml(point.bare_ground_pct)}%`}</td>
+          <td>${point.gravel_rock_pct === null ? "-" : `${escapeHtml(point.gravel_rock_pct)}%`}</td>
+          <td>${escapeHtml(point.completion_status.replaceAll("_", " "))}</td>
+          <td><button class="table-icon-button" data-open-batch="${escapeHtml(point.batch_id)}" type="button" title="Open batch" aria-label="Open ${escapeHtml(point.date)} batch"><i data-lucide="arrow-up-right" aria-hidden="true"></i></button></td>
+        </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+function renderOperationalDashboard() {
+  const data = state.dashboard;
+  if (!data) return;
+  const summary = data.summary || {};
+  const counts = data.counts || {};
+  const reviewCounts = data.review_status_counts || {};
+  const active = (counts.needs_review || 0) + (counts.observation_review || 0) + (counts.ready || 0) + (counts.failed || 0);
+  document.querySelector("#dashboard-observations").textContent = summary.observation_count || 0;
+  document.querySelector("#dashboard-sites").textContent = `${summary.site_count || 0} sites`;
+  document.querySelector("#dashboard-photos").textContent = summary.photo_count || 0;
+  document.querySelector("#dashboard-verified").textContent = `${summary.verified_photo_count || 0} verified`;
+  document.querySelector("#dashboard-partial").textContent = reviewCounts.partially_reviewed || 0;
+  document.querySelector("#dashboard-reviewed").textContent = `${reviewCounts.reviewed || 0} fully reviewed`;
+  document.querySelector("#dashboard-unresolved").textContent = counts.unresolved_photos || 0;
+  document.querySelector("#dashboard-active").textContent = `${active} active batches`;
+  document.querySelector("#dashboard-published").textContent = counts.published || 0;
+  document.querySelector("#dashboard-last-published").textContent = summary.last_published_at
+    ? formatDateTime(summary.last_published_at)
+    : "Not yet";
+  document.querySelector("#dashboard-freshness").textContent = `Updated ${formatDateTime(data.generated_at)}`;
+  renderQualityDashboard(data);
+  renderPipelineDashboard(data);
+  renderSiteMatrix(data);
+  renderVegetationTrend(data);
+  bindDashboardBatchLinks();
+  iconRefresh();
+}
+
+function scheduleDashboardRefresh() {
+  clearTimeout(state.dashboardRefreshTimer);
+  if (state.appView !== "dashboard") return;
+  const seconds = state.dashboard?.refresh_interval_seconds || 15;
+  state.dashboardRefreshTimer = setTimeout(async () => {
+    if (!document.hidden) await loadDashboard({silent: true});
+    scheduleDashboardRefresh();
+  }, seconds * 1000);
+}
+
+async function loadDashboard({silent = false} = {}) {
+  if (state.dashboardLoading) return;
+  state.dashboardLoading = true;
+  const refresh = document.querySelector("#refresh-dashboard-button");
+  if (refresh) refresh.disabled = true;
+  try {
+    state.dashboard = await api("/api/dashboard");
+    const counts = state.dashboard.counts;
+    document.querySelector("#metric-review").textContent = counts.needs_review;
+    document.querySelector("#metric-observations").textContent = counts.observation_review;
+    document.querySelector("#metric-ready").textContent = counts.ready;
+    document.querySelector("#metric-published").textContent = counts.published;
+    renderBatches();
+    renderOperationalDashboard();
+  } catch (error) {
+    if (!silent) showToast(error.message, true);
+  } finally {
+    state.dashboardLoading = false;
+    if (refresh) refresh.disabled = false;
+  }
 }
 
 async function loadMachineReviewConfig() {
@@ -789,6 +1044,16 @@ async function initialize() {
   document.querySelector("#publish-button").addEventListener("click", publishBatch);
   document.querySelector("#machine-review-button").addEventListener("click", generateMachineReview);
   document.querySelector("#observation-review-form").addEventListener("submit", saveObservationReview);
+  document.querySelector("#refresh-dashboard-button").addEventListener("click", async () => {
+    await loadDashboard();
+    scheduleDashboardRefresh();
+  });
+  document.querySelector("#dashboard-site-filter").addEventListener("change", (event) => {
+    state.dashboardSiteFilter = event.target.value;
+    renderVegetationTrend(state.dashboard);
+    bindDashboardBatchLinks();
+    iconRefresh();
+  });
   document.querySelector("#refresh-published-button").addEventListener("click", loadPublishedData);
   document.querySelector("#sync-sheets-button").addEventListener("click", syncGoogleSheets);
   document.querySelectorAll(".app-nav-button").forEach((button) => button.addEventListener("click", () => {
@@ -808,6 +1073,7 @@ async function initialize() {
   try {
     await Promise.all([loadSites(), loadMachineReviewConfig()]);
     await loadDashboard();
+    scheduleDashboardRefresh();
   } catch (error) {
     document.querySelector("#service-state").classList.add("offline");
     document.querySelector("#service-state").lastChild.textContent = " Offline";
