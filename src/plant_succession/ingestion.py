@@ -1172,6 +1172,8 @@ class IngestionService:
         return _exif_capture_time(image.getexif())
 
     def dashboard(self) -> dict[str, object]:
+        sites = self.list_sites()
+        site_names = {site["site_id"]: site["site_name"] for site in sites}
         with self._connection() as connection:
             status_counts = {
                 row["status"]: row["count"]
@@ -1182,7 +1184,192 @@ class IngestionService:
             unresolved = connection.execute(
                 "SELECT COUNT(*) AS count FROM photos WHERE review_status != 'verified'"
             ).fetchone()["count"]
+            batch_rows = connection.execute(
+                """
+                SELECT
+                    b.*,
+                    COUNT(p.photo_id) AS stored_photo_count,
+                    SUM(CASE WHEN p.review_status = 'verified' THEN 1 ELSE 0 END)
+                        AS reviewed_count,
+                    r.completion_status,
+                    r.estimated_total_vegetation_cover_pct,
+                    r.bare_ground_pct,
+                    r.gravel_rock_pct,
+                    r.litter_mulch_woodchip_pct,
+                    r.standing_dead_pct,
+                    r.dominant_species,
+                    r.reviewed_by,
+                    r.updated_at AS review_updated_at,
+                    integrity.status AS integrity_status,
+                    integrity.issue_count AS integrity_issue_count,
+                    integrity.warning_count AS integrity_warning_count
+                FROM batches b
+                LEFT JOIN photos p ON p.batch_id = b.batch_id
+                LEFT JOIN observation_reviews r ON r.batch_id = b.batch_id
+                LEFT JOIN batch_integrity_checks integrity
+                    ON integrity.batch_id = b.batch_id
+                GROUP BY b.batch_id
+                ORDER BY b.observation_date, CAST(b.site_id AS INTEGER), b.created_at
+                """
+            ).fetchall()
+            latest_sync = connection.execute(
+                """
+                SELECT * FROM destination_sync_attempts
+                ORDER BY started_at DESC LIMIT 1
+                """
+            ).fetchone()
+            failed_syncs = connection.execute(
+                """
+                SELECT COUNT(*) AS count FROM destination_sync_attempts
+                WHERE status = 'failed'
+                """
+            ).fetchone()["count"]
+            observation_events = connection.execute(
+                """
+                SELECT batch_id, actor_type, action, created_at
+                FROM observation_review_events
+                ORDER BY created_at
+                """
+            ).fetchall()
+
+        batches = [dict(row) for row in batch_rows]
+        review_status_counts: Counter[str] = Counter()
+        provenance_by_batch: dict[str, str] = {}
+        for event in observation_events:
+            if event["action"] in {"draft_saved", "finalized"}:
+                provenance_by_batch[event["batch_id"]] = event["actor_type"]
+        provenance_counts = Counter(provenance_by_batch.values())
+
+        quality_counts = Counter()
+        issues: list[dict[str, object]] = []
+        matrix_by_site: dict[str, dict[str, dict[str, object]]] = {
+            site["site_id"]: {} for site in sites
+        }
+        longitudinal_by_site: dict[str, list[dict[str, object]]] = {
+            site["site_id"]: [] for site in sites
+        }
+        for batch in batches:
+            completion_status = str(batch.get("completion_status") or "not_started")
+            review_status_counts[completion_status] += 1
+            reasons: list[str] = []
+            severity = "follow_up"
+            unresolved_in_batch = int(batch.get("stored_photo_count") or 0) - int(
+                batch.get("reviewed_count") or 0
+            )
+            if batch["status"] == "failed":
+                reasons.append("Pipeline run failed")
+                quality_counts["failed_batches"] += 1
+                severity = "blocking"
+            if unresolved_in_batch:
+                reasons.append(f"{unresolved_in_batch} photo roles unresolved")
+                quality_counts["batches_with_unresolved_photos"] += 1
+                severity = "blocking"
+            if completion_status == "not_started":
+                reasons.append("Observation review not started")
+                quality_counts["reviews_not_started"] += 1
+                if severity != "blocking":
+                    severity = "review"
+            elif completion_status == "partially_reviewed":
+                reasons.append("Observation is partially reviewed")
+                quality_counts["partial_reviews"] += 1
+            if batch.get("estimated_total_vegetation_cover_pct") is None:
+                reasons.append("Vegetation cover is missing")
+                quality_counts["missing_vegetation_cover"] += 1
+            if not str(batch.get("dominant_species") or "").strip():
+                reasons.append("Dominant taxon is missing")
+                quality_counts["missing_dominant_taxon"] += 1
+            integrity_issue_count = int(batch.get("integrity_issue_count") or 0)
+            if integrity_issue_count:
+                reasons.append(f"{integrity_issue_count} batch integrity issue(s)")
+                quality_counts["integrity_attention"] += 1
+                if severity != "blocking":
+                    severity = "review"
+
+            missing_field_count = sum(
+                (
+                    batch.get("estimated_total_vegetation_cover_pct") is None,
+                    not str(batch.get("dominant_species") or "").strip(),
+                )
+            )
+            cell = {
+                "date": batch["observation_date"],
+                "batch_id": batch["batch_id"],
+                "pipeline_status": batch["status"],
+                "completion_status": completion_status,
+                "photo_count": int(batch.get("stored_photo_count") or 0),
+                "verified_photo_count": int(batch.get("reviewed_count") or 0),
+                "missing_field_count": missing_field_count,
+            }
+            matrix_by_site.setdefault(str(batch["site_id"]), {})[
+                str(batch["observation_date"])
+            ] = cell
+            longitudinal_by_site.setdefault(str(batch["site_id"]), []).append(
+                {
+                    "date": batch["observation_date"],
+                    "batch_id": batch["batch_id"],
+                    "vegetation_cover_pct": batch.get(
+                        "estimated_total_vegetation_cover_pct"
+                    ),
+                    "bare_ground_pct": batch.get("bare_ground_pct"),
+                    "gravel_rock_pct": batch.get("gravel_rock_pct"),
+                    "litter_mulch_woodchip_pct": batch.get(
+                        "litter_mulch_woodchip_pct"
+                    ),
+                    "standing_dead_pct": batch.get("standing_dead_pct"),
+                    "completion_status": completion_status,
+                }
+            )
+            if reasons:
+                issues.append(
+                    {
+                        "batch_id": batch["batch_id"],
+                        "site_id": str(batch["site_id"]),
+                        "site_name": site_names.get(str(batch["site_id"]), ""),
+                        "observation_date": batch["observation_date"],
+                        "severity": severity,
+                        "reasons": reasons,
+                    }
+                )
+
+        severity_order = {"blocking": 0, "review": 1, "follow_up": 2}
+        issues.sort(
+            key=lambda issue: (
+                severity_order[str(issue["severity"])],
+                -date.fromisoformat(str(issue["observation_date"])).toordinal(),
+                int(str(issue["site_id"])),
+            )
+        )
+        observation_dates = sorted(
+            {str(batch["observation_date"]) for batch in batches}
+        )
+        matrix_rows = []
+        longitudinal_sites = []
+        for site in sites:
+            site_id = site["site_id"]
+            cells = matrix_by_site.get(site_id, {})
+            matrix_rows.append(
+                {
+                    **site,
+                    "observation_count": len(cells),
+                    "cells": [cells.get(value) for value in observation_dates],
+                }
+            )
+            longitudinal_sites.append(
+                {
+                    **site,
+                    "points": longitudinal_by_site.get(site_id, []),
+                }
+            )
+
+        latest_batch_created_at = max(
+            (str(batch["created_at"]) for batch in batches), default=""
+        )
+        last_published_at = max(
+            (str(batch.get("published_at") or "") for batch in batches), default=""
+        )
         return {
+            "generated_at": utc_now(),
+            "refresh_interval_seconds": 15,
             "counts": {
                 "needs_review": status_counts.get("needs_review", 0),
                 "observation_review": status_counts.get("observation_review", 0),
@@ -1191,7 +1378,38 @@ class IngestionService:
                 "failed": status_counts.get("failed", 0),
                 "unresolved_photos": unresolved,
             },
-            "batches": self.list_batches(),
+            "summary": {
+                "batch_count": len(batches),
+                "observation_count": sum(review_status_counts.values()),
+                "photo_count": sum(
+                    int(batch.get("stored_photo_count") or 0) for batch in batches
+                ),
+                "verified_photo_count": sum(
+                    int(batch.get("reviewed_count") or 0) for batch in batches
+                ),
+                "site_count": len(sites),
+                "latest_batch_created_at": latest_batch_created_at,
+                "last_published_at": last_published_at,
+                "latest_sync": dict(latest_sync) if latest_sync is not None else None,
+            },
+            "review_status_counts": dict(review_status_counts),
+            "review_provenance_counts": dict(provenance_counts),
+            "quality": {
+                **quality_counts,
+                "failed_sync_attempts": failed_syncs,
+                "issue_batch_count": len(issues),
+            },
+            "issues": issues,
+            "site_matrix": {
+                "dates": observation_dates,
+                "rows": matrix_rows,
+            },
+            "longitudinal": {"sites": longitudinal_sites},
+            "batches": sorted(
+                batches,
+                key=lambda batch: str(batch["created_at"]),
+                reverse=True,
+            ),
         }
 
     def list_batches(self) -> list[dict[str, object]]:

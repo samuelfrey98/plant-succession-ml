@@ -77,6 +77,21 @@ export PLANT_SITE_ANCHORS="$HOME/PlantSuccession/site_anchors.csv"
 
 The service never exposes Drive IDs, private links, or exact coordinates in the public manifest.
 
+## Operational Dashboard
+
+The opening **Dashboard** view is a live read of `ingestion.sqlite`. It polls every 15 seconds while visible
+and also supports manual refresh. The dashboard reports:
+
+- batch, observation, photo, publication, and review-status counts
+- missing vegetation-cover and dominant-taxon fields
+- batch-integrity and unresolved-photo exceptions
+- observation-review provenance without merging human and machine identities
+- a site-by-date observation matrix
+- site-filtered descriptive vegetation-cover series
+
+Quality rows, matrix cells, and trend-table actions open the corresponding ingestion batch. The dashboard
+does not write observations or infer missing ecological values; it only summarizes recorded workflow state.
+
 ## Published Data And Pipeline Runs
 
 The app's **Published data** view is a read-only catalog over the validated CSV snapshot. It shows
@@ -276,7 +291,7 @@ FastAPI publishes interactive API documentation at `http://127.0.0.1:8765/docs`.
 - `POST /api/batches/{batch_id}/machine-review`: generate and audit a model suggestion
 - `PUT /api/batches/{batch_id}/observation-review`: save or complete the batch observation review
 - `POST /api/batches/{batch_id}/publish`: validate and publish a ready batch
-- `GET /api/dashboard`: retrieve queue and pipeline metrics
+- `GET /api/dashboard`: retrieve operational metrics, quality issues, provenance, site/date coverage, and longitudinal series
 
 ## Current Boundary
 

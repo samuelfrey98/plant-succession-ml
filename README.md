@@ -67,6 +67,11 @@ run history without requiring direct SQLite access. Google Sheets can be configu
 SQLite and validated CSVs remain the source of truth, and a Sheets failure is recorded for retry rather than
 invalidating publication.
 
+The opening **Dashboard** view reads directly from SQLite and refreshes every 15 seconds while visible. It
+summarizes pipeline state, review provenance, missing key fields, site/date coverage, and descriptive
+vegetation-cover series. Quality rows and matrix cells link back to the exact batch review, keeping monitoring
+and correction in the same workflow.
+
 ![Plant Succession local ingestion queue](docs/screenshots/ingestion_app.png)
 
 ```bash
