@@ -767,6 +767,75 @@ function fieldLabel(name) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function splitTaxonLabels(value) {
+  return String(value || "")
+    .split(/[;,\n]+/)
+    .map((label) => label.trim())
+    .filter(Boolean);
+}
+
+function taxonKey(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
+function currentTaxonLabels(form) {
+  return [
+    form.elements.namedItem("dominant_species")?.value,
+    form.elements.namedItem("secondary_species")?.value,
+    form.elements.namedItem("tertiary_species")?.value,
+    ...splitTaxonLabels(form.elements.namedItem("new_taxon_labels")?.value),
+  ].map((label) => String(label || "").trim()).filter(Boolean);
+}
+
+function updateNewTaxonComparison() {
+  const form = document.querySelector("#observation-review-form");
+  const target = document.querySelector("#new-taxon-comparison");
+  const history = state.selectedBatch?.site_taxon_history || {};
+  const previous = new Set((history.taxa || []).map((taxon) => taxonKey(taxon.label)));
+  const entered = [...new Map(
+    currentTaxonLabels(form).map((label) => [taxonKey(label), label]),
+  ).values()];
+  if (!history.observation_count) {
+    target.textContent = "No earlier structured observation exists for comparison; leave new taxon unknown unless other dated evidence establishes it.";
+    target.className = "comparison-neutral";
+    return;
+  }
+  if (!entered.length) {
+    target.textContent = "Enter taxon labels to compare them with earlier site records.";
+    target.className = "comparison-neutral";
+    return;
+  }
+  const novel = entered.filter((label) => !previous.has(taxonKey(label)));
+  if (novel.length) {
+    target.textContent = `Not previously logged by exact label: ${novel.join("; ")}. Check synonyms or earlier uncertain labels before choosing Yes.`;
+    target.className = "comparison-new";
+  } else {
+    target.textContent = "Every entered label already appears in an earlier structured observation for this site.";
+    target.className = "comparison-known";
+  }
+}
+
+function renderSiteTaxonHistory() {
+  const history = state.selectedBatch?.site_taxon_history || {};
+  const taxa = history.taxa || [];
+  document.querySelector("#site-taxon-history-count").textContent = taxa.length
+    ? `${taxa.length} labels`
+    : "No labels";
+  document.querySelector("#site-taxon-history-summary").textContent = history.observation_count
+    ? `Compiled from ${history.observation_count} earlier structured ${history.observation_count === 1 ? "observation" : "observations"}. Exact-label comparison does not resolve synonyms.`
+    : "No earlier structured observation is available for this date.";
+  document.querySelector("#site-taxon-history-list").innerHTML = taxa.length
+    ? taxa.map((taxon) => {
+      const dateRange = taxon.first_seen === taxon.last_seen
+        ? taxon.first_seen
+        : `${taxon.first_seen} to ${taxon.last_seen}`;
+      const title = `${dateRange}; ${taxon.observation_count} ${taxon.observation_count === 1 ? "observation" : "observations"}`;
+      return `<span class="taxon-history-item" title="${escapeHtml(title)}">${escapeHtml(taxon.label)}</span>`;
+    }).join("")
+    : '<span class="taxon-history-empty">Nothing recorded before this visit</span>';
+  updateNewTaxonComparison();
+}
+
 function applyMachineDraft(result, {confirmOverwrite = false} = {}) {
   const values = result?.draft?.values || {};
   const form = document.querySelector("#observation-review-form");
@@ -784,6 +853,7 @@ function applyMachineDraft(result, {confirmOverwrite = false} = {}) {
     field.value = typeof value === "boolean" ? String(value) : value;
     field.classList.add("machine-suggested");
   });
+  updateNewTaxonComparison();
   return true;
 }
 
@@ -847,6 +917,7 @@ function renderObservationReview() {
   if (!review.notes && batch.observation_notes) {
     setObservationField(form, "notes", batch.observation_notes);
   }
+  renderSiteTaxonHistory();
   const photoReviewComplete = batch.photos.every((photo) => photo.review_status === "verified");
   const published = batch.status === "published";
   [...form.elements].forEach((field) => {
@@ -1253,6 +1324,11 @@ async function initialize() {
   document.querySelector("#upload-form").addEventListener("submit", uploadBatch);
   document.querySelector("#site-id").addEventListener("change", renderBatchIntegrity);
   document.querySelector("#observation-date").addEventListener("change", renderBatchIntegrity);
+  document.querySelector("#observation-review-form").addEventListener("input", (event) => {
+    if (["dominant_species", "secondary_species", "tertiary_species", "new_taxon_labels"].includes(event.target.name)) {
+      updateNewTaxonComparison();
+    }
+  });
   document.querySelector("#integrity-override-confirmed").addEventListener("change", updateStageButton);
   document.querySelector("#accept-button").addEventListener("click", acceptSuggestions);
   document.querySelector("#publish-button").addEventListener("click", publishBatch);

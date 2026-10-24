@@ -212,7 +212,8 @@ class IngestionServiceTests(unittest.TestCase):
             "dominant_taxon_rank": "genus",
             "dominant_species_confidence": "likely",
             "dominant_flowering": "false",
-            "new_species_detected": "false",
+            "new_taxon_labels": "Solidago sp.; unknown_sedge_01",
+            "new_species_detected": "true",
             "successional_stage": "developing_herb_layer",
             "notes": "Reviewed from the staged photo set.",
             "completion_status": "reviewed",
@@ -245,6 +246,9 @@ class IngestionServiceTests(unittest.TestCase):
         self.assertEqual(observation["review_status"], "reviewed")
         self.assertEqual(observation["estimated_total_vegetation_cover_pct"], "65")
         self.assertEqual(observation["dominant_species"], "Artemisia sp.")
+        self.assertEqual(
+            observation["new_taxon_labels"], "Solidago sp.; unknown_sedge_01"
+        )
         self.assertEqual(
             validate_public_photo_data(self.public_dir, ROOT / "data" / "schema"), []
         )
@@ -355,6 +359,15 @@ class IngestionServiceTests(unittest.TestCase):
                 batch["batch_id"],
                 {"notes": "Some visible vegetation.", "completion_status": "partially_reviewed"},
                 finalize=True,
+            )
+        with self.assertRaisesRegex(IngestionError, "conflict"):
+            self.service.save_observation_review(
+                batch["batch_id"],
+                {
+                    "new_taxon_labels": "Testus nova; Testus nova",
+                    "new_species_detected": "false",
+                },
+                finalize=False,
             )
 
         batch = self.service.save_observation_review(
@@ -497,11 +510,11 @@ class IngestionServiceTests(unittest.TestCase):
 
     def test_canonical_store_is_versioned_and_exports_over_changed_csvs(self):
         status = self.service.canonical_store_status()
-        self.assertEqual(status["schema_version"], 5)
-        self.assertEqual(status["expected_schema_version"], 5)
+        self.assertEqual(status["schema_version"], 6)
+        self.assertEqual(status["expected_schema_version"], 6)
         self.assertEqual(
             {migration["version"] for migration in status["migrations"]},
-            {1, 2, 3, 4, 5},
+            {1, 2, 3, 4, 5, 6},
         )
         self.assertIn(
             "observations.csv",
@@ -527,7 +540,38 @@ class IngestionServiceTests(unittest.TestCase):
         self.assertEqual(csv_rows(path)[0]["notes"], canonical_note)
 
         reloaded = IngestionService(self.service.paths)
-        self.assertEqual(len(reloaded.canonical_store_status()["migrations"]), 5)
+        self.assertEqual(len(reloaded.canonical_store_status()["migrations"]), 6)
+
+    def test_site_taxon_history_includes_ranked_and_named_new_taxa(self):
+        earlier = self.service.create_batch(
+            "3", "2026-11-01", "", [("wide.jpg", image_bytes((40, 90, 50)))]
+        )
+        earlier = self.service.accept_explicit_suggestions(earlier["batch_id"])
+        self.service.save_observation_review(
+            earlier["batch_id"],
+            {
+                "dominant_species": "Testus alpha",
+                "dominant_taxon_rank": "species",
+                "dominant_species_confidence": "confident",
+                "new_taxon_labels": "Testus beta; unknown_sedge_99",
+                "new_species_detected": "true",
+                "completion_status": "reviewed",
+            },
+            finalize=True,
+        )
+        later = self.service.create_batch(
+            "3", "2026-11-02", "", [("wide.jpg", image_bytes((45, 95, 55)))]
+        )
+        later = self.service.accept_explicit_suggestions(later["batch_id"])
+        labels = {
+            taxon["label"]: taxon
+            for taxon in later["site_taxon_history"]["taxa"]
+        }
+        self.assertIn("Testus alpha", labels)
+        self.assertIn("Testus beta", labels)
+        self.assertIn("unknown_sedge_99", labels)
+        self.assertIn("dominant", labels["Testus alpha"]["roles"])
+        self.assertIn("new_taxon", labels["Testus beta"]["roles"])
 
     def test_explicit_import_and_online_backup(self):
         source = self.root / "replacement"
@@ -547,7 +591,7 @@ class IngestionServiceTests(unittest.TestCase):
         backup = self.service.backup_database(self.root / "backups")
         backup_path = Path(backup["path"])
         self.assertTrue(backup_path.exists())
-        self.assertEqual(backup["schema_versions"], [1, 2, 3, 4, 5])
+        self.assertEqual(backup["schema_versions"], [1, 2, 3, 4, 5, 6])
         with closing(sqlite3.connect(backup_path)) as connection:
             self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         manifest = json.loads(Path(backup["manifest"]).read_text(encoding="utf-8"))

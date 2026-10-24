@@ -31,6 +31,12 @@ Do not force species-level identification when confidence is low. Use the best d
 
 Dominant taxon means the taxon contributing the most live vegetation cover in the observation area, not necessarily the tallest or most visually interesting plant.
 
+Record the three taxa contributing the most visible live cover in the dominant, secondary, and tertiary
+slots. These fields are a ranked dominance summary, not a complete species inventory. If another taxon is
+newly observed at the site, record its label in `new_taxon_labels` even when it ranks fourth or lower. Set
+`new_species_detected` to `true` only when comparison with earlier dated records supports that conclusion;
+use blank/unknown when there is no earlier record or the identity is too uncertain to compare.
+
 ## Cover Estimates
 
 Estimate percent cover visually. Percent fields should be integers from 0 to 100.

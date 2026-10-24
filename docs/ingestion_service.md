@@ -239,6 +239,11 @@ publishable. The Observation tab stores a structured private draft containing su
 up to three uncertainty-aware taxon labels, visible flowering and seed-set states, a successional-stage
 assessment, notes, and an explicit partial-or-complete result.
 
+The taxon section also shows labels from earlier dated observations at the selected site. The three ranked
+slots remain a dominance summary; `new_taxon_labels` captures newly recorded fourth-or-lower taxa without
+forcing them into those slots. The browser compares exact labels against prior records as a review aid and
+warns that synonyms and uncertain identifications still require human judgment.
+
 Draft saves and final submissions are separate append-only events with actor identity and a complete
 JSON snapshot. Completing a partial review requires a completeness note, while unsupported values may
 remain blank and publish as null. The final reviewed values are mapped onto the existing observation
