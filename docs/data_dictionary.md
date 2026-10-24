@@ -26,6 +26,8 @@ Core fields:
 - `observation_date`: date of field visit
 - `dominant_species`, `secondary_species`, `tertiary_species`: best defensible taxon labels
 - `dominant_taxon_rank`, `secondary_taxon_rank`, `tertiary_taxon_rank`: species, genus, family, unknown, or morphotype
+- `new_taxon_labels`: semicolon-separated labels first recorded at the site during this visit, including taxa outside the three dominance slots
+- `new_species_detected`: whether earlier dated site records support at least one label as newly recorded
 - cover fields: integer estimates from 0 to 100
 - photo link fields: links to Drive files or folders
 

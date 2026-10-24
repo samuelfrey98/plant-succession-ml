@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Review queue for Plant Succession field-photo ingestion.">
     <title>Plant Succession Ingest</title>
-    <link rel="stylesheet" href="/assets/styles.css?v=20261023-2">
+    <link rel="stylesheet" href="/assets/styles.css?v=20261023-3">
     <script defer src="/assets/lucide.min.js"></script>
-    <script defer src="/assets/app.js?v=20261023-2"></script>
+    <script defer src="/assets/app.js?v=20261023-3"></script>
   </head>
   <body>
     <header class="app-header">
@@ -364,6 +364,14 @@
                   <label>Flowering<select name="tertiary_flowering"><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>
                   <label>Seed set<select name="tertiary_seed_set"><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>
                 </div>
+                <section class="site-taxon-history" aria-labelledby="site-taxon-history-title">
+                  <div>
+                    <h4 id="site-taxon-history-title">Recorded before this visit</h4>
+                    <span id="site-taxon-history-count"></span>
+                  </div>
+                  <p id="site-taxon-history-summary"></p>
+                  <div class="taxon-history-list" id="site-taxon-history-list"></div>
+                </section>
               </fieldset>
 
               <fieldset>
@@ -371,7 +379,7 @@
                 <details class="field-guide">
                   <summary>How to judge interpretation and review status</summary>
                   <dl>
-                    <div><dt>New taxon detected</dt><dd>Yes only when comparison with earlier records supports that the taxon was not previously recorded at this site.</dd></div>
+                    <div><dt>New taxon recorded</dt><dd>Yes when any defensible taxon was not in the site's earlier records, even if it is not one of the three dominant taxa. This means newly recorded, not proven new arrival.</dd></div>
                     <div><dt>Early colonization</dt><dd>Mostly open substrate with scattered pioneer plants.</dd></div>
                     <div><dt>Developing herb layer</dt><dd>Herbaceous cover is expanding but remains discontinuous.</dd></div>
                     <div><dt>Dense herb layer</dt><dd>Herbaceous vegetation is mostly continuous.</dd></div>
@@ -384,10 +392,14 @@
                   </dl>
                 </details>
                 <div class="interpretation-grid">
-                  <label>New taxon detected<select name="new_species_detected"><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>
+                  <label>New taxon recorded<select name="new_species_detected"><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>
                   <label>Successional stage<select name="successional_stage"><option value="">Not assessed</option><option value="early_colonization">Early colonization</option><option value="developing_herb_layer">Developing herb layer</option><option value="dense_herb_layer">Dense herb layer</option><option value="shrub_establishment">Shrub establishment</option><option value="young_woodland">Young woodland</option></select></label>
                   <label>Review result<select name="completion_status"><option value="partially_reviewed">Partial: some fields unavailable</option><option value="reviewed">Reviewed: all available evidence assessed</option></select></label>
                 </div>
+                <label class="new-taxon-labels">New taxon label(s)
+                  <input name="new_taxon_labels" type="text" placeholder="Use semicolons between labels, e.g. Solidago sp.; unknown_sedge_01">
+                  <small id="new-taxon-comparison">Compare candidate labels with the earlier site records shown above.</small>
+                </label>
                 <label>Observation notes<textarea name="notes" rows="3" placeholder="Visible conditions, uncertainty, or context"></textarea></label>
                 <label>Completeness note<textarea name="completeness_notes" rows="2" placeholder="Required when completing a partial review"></textarea></label>
               </fieldset>

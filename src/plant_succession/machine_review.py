@@ -101,6 +101,8 @@ Taxon guidance:
 - Dominant means the taxon occupying the most visible live cover; secondary and tertiary are next.
 - Flowering means open flowers are visibly present. Seed set means visible fruit or seed structures.
 - Use taxon confidence to preserve uncertainty.
+- Leave new_species_detected null. Current-visit photos alone cannot establish whether a label was absent
+  from earlier site records.
 
 Successional-stage guidance:
 - early_colonization: mostly open substrate with scattered pioneer plants.

@@ -131,6 +131,7 @@ class ObservationReviewUpdate(BaseModel):
     tertiary_species_confidence: str = ""
     tertiary_flowering: str = ""
     tertiary_seed_set: str = ""
+    new_taxon_labels: str = ""
     new_species_detected: str = ""
     successional_stage: str = ""
     notes: str = ""

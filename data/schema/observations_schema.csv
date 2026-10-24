@@ -27,7 +27,8 @@ bare_ground_pct,int,no,,Estimated bare soil cover from 0 to 100.,20
 gravel_rock_pct,int,no,,Estimated gravel or rock cover from 0 to 100.,25
 litter_mulch_woodchip_pct,int,no,,Estimated litter mulch or woodchip cover from 0 to 100.,10
 standing_dead_pct,int,no,,Estimated standing dead vegetation cover from 0 to 100.,5
-new_species_detected,bool,no,true;false,Whether a new taxon was noticed at the site.,true
+new_taxon_labels,string,no,,Semicolon-separated labels newly recorded at the site during this visit.,Solidago sp.; unknown_sedge_01
+new_species_detected,bool,no,true;false,Whether earlier dated records support a taxon as newly recorded at the site.,true
 successional_stage,categorical,no,early_colonization;developing_herb_layer;dense_herb_layer;shrub_establishment;young_woodland,Subjective stage label.,early_colonization
 wide_photo_link,string,no,,Drive file or folder link.,https://example.com/photos/site_01/2026-06-07/wide
 quadrat_photo_link,string,no,,Drive file or folder link.,https://example.com/photos/site_01/2026-06-07/quadrat

@@ -49,7 +49,7 @@ UPLOAD_TOKEN_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 MAX_SITE_MATCH_DISTANCE_METERS = 150.0
 UPLOAD_SUGGESTION_MAX_AGE_SECONDS = 24 * 60 * 60
 REVIEW_ACTOR_TYPES = {"human", "ai_assistant", "model", "rule", "legacy_unknown"}
-DATABASE_SCHEMA_VERSION = 5
+DATABASE_SCHEMA_VERSION = 6
 DERIVED_EXPORTS = {"analysis_ready_observations.csv"}
 OBSERVATION_PERCENT_FIELDS = (
     "estimated_total_vegetation_cover_pct",
@@ -71,6 +71,7 @@ OBSERVATION_TEXT_FIELDS = (
     "dominant_species",
     "secondary_species",
     "tertiary_species",
+    "new_taxon_labels",
     "notes",
     "completeness_notes",
 )
@@ -107,6 +108,7 @@ OBSERVATION_REVIEW_FIELDS = (
     "tertiary_species_confidence",
     "tertiary_flowering",
     "tertiary_seed_set",
+    "new_taxon_labels",
     "new_species_detected",
     "successional_stage",
     "notes",
@@ -586,6 +588,7 @@ class IngestionService:
         self.paths.archive_dir.mkdir(parents=True, exist_ok=True)
         self._initialize_database()
         self._seed_canonical_store()
+        self._ensure_observation_export_fields()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.paths.database)
@@ -855,6 +858,15 @@ class IngestionService:
                 WHERE status IN ('queued', 'running');
                 """,
             )
+            self._apply_migration(
+                connection,
+                6,
+                "name_new_taxa",
+                """
+                ALTER TABLE observation_reviews
+                ADD COLUMN new_taxon_labels TEXT NOT NULL DEFAULT '';
+                """,
+            )
             connection.execute(
                 """
                 UPDATE machine_review_jobs
@@ -1037,6 +1049,33 @@ class IngestionService:
         if count:
             return
         self.import_public_exports(self.paths.public_dir, replace=False)
+
+    def _ensure_observation_export_fields(self) -> None:
+        """Add newly optional observation columns without replacing existing rows."""
+
+        with self._connection() as connection:
+            dataset = connection.execute(
+                "SELECT 1 FROM canonical_datasets WHERE filename = 'observations.csv'"
+            ).fetchone()
+            if dataset is None:
+                return
+            fields, rows = self._read_canonical_dataset(connection, "observations.csv")
+            if "new_taxon_labels" in fields:
+                return
+            insert_at = (
+                fields.index("new_species_detected")
+                if "new_species_detected" in fields
+                else len(fields)
+            )
+            fields.insert(insert_at, "new_taxon_labels")
+            for row in rows:
+                row["new_taxon_labels"] = ""
+            self._replace_canonical_dataset(
+                connection,
+                "observations.csv",
+                fields,
+                rows,
+            )
 
     def import_public_exports(
         self, source_dir: Path, *, replace: bool = False
@@ -2102,6 +2141,109 @@ class IngestionService:
         self._record_batch_integrity(batch_id, integrity, False)
         return integrity
 
+    @staticmethod
+    def _split_taxon_labels(value: object) -> list[str]:
+        return [
+            label.strip()
+            for label in re.split(r"[;,\n]+", str(value or ""))
+            if label.strip()
+        ]
+
+    def site_taxon_history(
+        self,
+        site_id: str,
+        *,
+        before_date: str | None = None,
+        exclude_batch_id: str | None = None,
+    ) -> dict[str, object]:
+        """Summarize structured taxon labels recorded before a site visit."""
+
+        with self._connection() as connection:
+            local_rows = [
+                dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT b.batch_id, b.observation_date, review.*
+                    FROM batches b
+                    JOIN observation_reviews review ON review.batch_id = b.batch_id
+                    WHERE b.site_id = ?
+                      AND (? IS NULL OR b.observation_date < ?)
+                      AND (? IS NULL OR b.batch_id != ?)
+                    ORDER BY b.observation_date, b.created_at
+                    """,
+                    (
+                        str(site_id),
+                        before_date,
+                        before_date,
+                        exclude_batch_id,
+                        exclude_batch_id,
+                    ),
+                ).fetchall()
+            ]
+        local_dates = {str(row["observation_date"]) for row in local_rows}
+        _, published_rows = self.read_canonical_dataset("observations.csv")
+        source_rows = [
+            row
+            for row in published_rows
+            if str(row.get("site_id") or "") == str(site_id)
+            and (not before_date or str(row.get("observation_date") or "") < before_date)
+            and str(row.get("observation_date") or "") not in local_dates
+        ]
+        source_rows.extend(local_rows)
+
+        history: dict[str, dict[str, object]] = {}
+        observation_dates: set[str] = set()
+
+        def record(label: object, observed_on: str, role: str) -> None:
+            cleaned = " ".join(str(label or "").split())
+            if not cleaned:
+                return
+            key = cleaned.casefold()
+            item = history.setdefault(
+                key,
+                {
+                    "label": cleaned,
+                    "first_seen": observed_on,
+                    "last_seen": observed_on,
+                    "observation_dates": set(),
+                    "roles": set(),
+                },
+            )
+            item["first_seen"] = min(str(item["first_seen"]), observed_on)
+            item["last_seen"] = max(str(item["last_seen"]), observed_on)
+            item["observation_dates"].add(observed_on)  # type: ignore[union-attr]
+            item["roles"].add(role)  # type: ignore[union-attr]
+
+        for row in source_rows:
+            observed_on = str(row.get("observation_date") or "")
+            if not observed_on:
+                continue
+            observation_dates.add(observed_on)
+            for role in ("dominant", "secondary", "tertiary"):
+                record(row.get(f"{role}_species"), observed_on, role)
+            for label in self._split_taxon_labels(row.get("new_taxon_labels")):
+                record(label, observed_on, "new_taxon")
+
+        taxa = []
+        for item in history.values():
+            taxa.append(
+                {
+                    "label": item["label"],
+                    "first_seen": item["first_seen"],
+                    "last_seen": item["last_seen"],
+                    "observation_count": len(item["observation_dates"]),
+                    "roles": sorted(item["roles"]),
+                }
+            )
+        taxa.sort(key=lambda item: str(item["label"]).casefold())
+        return {
+            "site_id": str(site_id),
+            "before_date": before_date or "",
+            "observation_count": len(observation_dates),
+            "taxon_count": len(taxa),
+            "taxa": taxa,
+        }
+
     def get_batch(self, batch_id: str) -> dict[str, object]:
         with self._connection() as connection:
             batch = connection.execute(
@@ -2232,6 +2374,11 @@ class IngestionService:
                 if isinstance(machine_payload, dict)
                 else None
             )
+        result["site_taxon_history"] = self.site_taxon_history(
+            str(result["site_id"]),
+            before_date=str(result["observation_date"]),
+            exclude_batch_id=batch_id,
+        )
         return result
 
     def machine_review_configuration(self) -> dict[str, object]:
@@ -2663,6 +2810,20 @@ class IngestionService:
             if value and value not in allowed:
                 raise IngestionError(f"{field} contains an unsupported value.")
             normalized[field] = value
+
+        new_taxa: list[str] = []
+        seen_taxa: set[str] = set()
+        for label in IngestionService._split_taxon_labels(normalized["new_taxon_labels"]):
+            key = label.casefold()
+            if key in seen_taxa:
+                continue
+            seen_taxa.add(key)
+            new_taxa.append(label)
+        normalized["new_taxon_labels"] = "; ".join(new_taxa)
+        if new_taxa and normalized["new_species_detected"] == "false":
+            raise IngestionError(
+                "New taxon labels conflict with 'No' for new taxon recorded."
+            )
 
         if not normalized["completion_status"]:
             normalized["completion_status"] = "partially_reviewed"
