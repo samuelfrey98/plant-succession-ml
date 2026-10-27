@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Review queue for Plant Succession field-photo ingestion.">
     <title>Plant Succession Ingest</title>
-    <link rel="stylesheet" href="/assets/styles.css?v=20261023-3">
+    <link rel="stylesheet" href="/assets/styles.css?v=20261027-2">
     <script defer src="/assets/lucide.min.js"></script>
-    <script defer src="/assets/app.js?v=20261023-3"></script>
+    <script defer src="/assets/app.js?v=20261027-2"></script>
   </head>
   <body>
     <header class="app-header">
@@ -35,6 +35,14 @@
         Service online
       </div>
     </header>
+
+    <aside class="demo-banner hidden" id="demo-banner" aria-label="Demo environment notice">
+      <i data-lucide="flask-conical" aria-hidden="true"></i>
+      <div>
+        <strong>Synthetic public demo</strong>
+        <span id="demo-banner-copy">Example batches are isolated from project records.</span>
+      </div>
+    </aside>
 
     <main class="dashboard-shell" id="dashboard-shell">
       <section class="dashboard-header">
@@ -207,6 +215,7 @@
           </div>
           <div class="segmented-control" role="group" aria-label="Filter batches">
             <button class="segment active" data-filter="review" type="button" title="Observations that still need human review">Needs review</button>
+            <button class="segment" data-filter="verification" type="button" title="Saved observations with automated checks to resolve">Verification</button>
             <button class="segment" data-filter="active" type="button" title="Batches not yet published">Open</button>
             <button class="segment" data-filter="published" type="button">Published</button>
             <button class="segment" data-filter="all" type="button">All</button>
@@ -276,6 +285,20 @@
 
           <section class="observation-review-panel hidden" id="observation-review-panel" role="tabpanel" aria-labelledby="observation-tab">
             <div class="observation-stage-note" id="observation-stage-note"></div>
+            <section class="verification-panel verification-pending" id="verification-panel" aria-labelledby="verification-title">
+              <div class="verification-header">
+                <div>
+                  <p class="eyebrow">Deterministic checks</p>
+                  <h3 id="verification-title">Automated verification</h3>
+                  <p id="verification-summary">Save an observation draft to run verification.</p>
+                </div>
+                <button class="secondary-button" id="run-verification-button" type="button" disabled>
+                  <i data-lucide="shield-check" aria-hidden="true"></i>
+                  Run again
+                </button>
+              </div>
+              <ul class="verification-issues" id="verification-issues"></ul>
+            </section>
             <section class="machine-assist" aria-labelledby="machine-assist-title">
               <div class="machine-assist-header">
                 <div>

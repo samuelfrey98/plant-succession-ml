@@ -49,7 +49,10 @@ UPLOAD_TOKEN_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 MAX_SITE_MATCH_DISTANCE_METERS = 150.0
 UPLOAD_SUGGESTION_MAX_AGE_SECONDS = 24 * 60 * 60
 REVIEW_ACTOR_TYPES = {"human", "ai_assistant", "model", "rule", "legacy_unknown"}
-DATABASE_SCHEMA_VERSION = 6
+DATABASE_SCHEMA_VERSION = 7
+OBSERVATION_VERIFIER_ID = "observation_rules"
+OBSERVATION_VERIFIER_VERSION = "observation_rules_v2"
+SURFACE_COVER_TOLERANCE = 5
 DERIVED_EXPORTS = {"analysis_ready_observations.csv"}
 OBSERVATION_PERCENT_FIELDS = (
     "estimated_total_vegetation_cover_pct",
@@ -518,6 +521,275 @@ def assess_batch_integrity(
     }
 
 
+def verify_observation_values(
+    review: dict[str, object],
+    *,
+    photos: Iterable[dict[str, object]] = (),
+    integrity: dict[str, object] | None = None,
+    site_taxon_history: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Run deterministic, non-destructive checks on one observation review."""
+
+    issues: list[dict[str, str]] = []
+
+    def add(
+        rule_id: str,
+        severity: str,
+        field_name: str,
+        message: str,
+        suggested_fix: str,
+    ) -> None:
+        issues.append(
+            {
+                "rule_id": rule_id,
+                "severity": severity,
+                "field_name": field_name,
+                "message": message,
+                "suggested_fix": suggested_fix,
+            }
+        )
+
+    for field in OBSERVATION_PERCENT_FIELDS:
+        value = review.get(field)
+        if value in {None, ""}:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            add(
+                "cover.invalid_number",
+                "blocking",
+                field,
+                f"{field.replace('_', ' ')} is not numeric.",
+                "Enter a whole-number percentage from 0 to 100 or leave it blank.",
+            )
+            continue
+        if not 0 <= number <= 100:
+            add(
+                "cover.out_of_range",
+                "blocking",
+                field,
+                f"{field.replace('_', ' ')} is outside 0 to 100.",
+                "Enter a percentage from 0 to 100.",
+            )
+
+    surface_fields = OBSERVATION_PERCENT_FIELDS[:4]
+    surface_values = [review.get(field) for field in surface_fields]
+    present_surface = [value not in {None, ""} for value in surface_values]
+    if any(present_surface) and not all(present_surface):
+        missing = [
+            field.replace("_pct", "").replace("_", " ")
+            for field, present in zip(surface_fields, present_surface)
+            if not present
+        ]
+        add(
+            "cover.surface_incomplete",
+            "warning",
+            "estimated_total_vegetation_cover_pct",
+            f"The ground-surface estimate is incomplete; missing {', '.join(missing)}.",
+            "Fill all four ground-surface fields when the framing supports it, or leave a completeness note explaining the blanks.",
+        )
+    elif all(present_surface):
+        try:
+            surface_sum = sum(float(value) for value in surface_values)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            surface_sum = None
+        if surface_sum is None:
+            pass
+        elif abs(surface_sum - 100) > SURFACE_COVER_TOLERANCE:
+            add(
+                "cover.surface_sum",
+                "blocking",
+                "estimated_total_vegetation_cover_pct",
+                f"Vegetation, bare ground, gravel/rock, and litter/mulch total {surface_sum:g}%.",
+                f"Recheck the four ground-surface estimates so they total within {SURFACE_COVER_TOLERANCE} percentage points of 100. Standing dead is separate and may overlap.",
+            )
+    else:
+        add(
+            "cover.surface_missing",
+            "warning",
+            "estimated_total_vegetation_cover_pct",
+            "No ground-surface cover estimate is recorded.",
+            "Estimate cover when the photos show the monitored surface, or document why it is unavailable.",
+        )
+
+    taxon_labels: list[tuple[str, str]] = []
+    for prefix in ("dominant", "secondary", "tertiary"):
+        label = str(review.get(f"{prefix}_species") or "").strip()
+        rank = str(review.get(f"{prefix}_taxon_rank") or "").strip()
+        confidence = str(review.get(f"{prefix}_species_confidence") or "").strip()
+        if not label:
+            continue
+        taxon_labels.append((prefix, label))
+        if not rank:
+            add(
+                "taxon.rank_missing",
+                "warning",
+                f"{prefix}_taxon_rank",
+                f"The {prefix} taxon has a label but no taxonomic rank.",
+                "Choose species, genus, family, unknown, or morphotype.",
+            )
+        if not confidence:
+            add(
+                "taxon.confidence_missing",
+                "warning",
+                f"{prefix}_species_confidence",
+                f"The {prefix} taxon has a label but no confidence value.",
+                "Record confident, likely, or uncertain.",
+            )
+
+    if not taxon_labels:
+        add(
+            "taxon.dominant_missing",
+            "warning",
+            "dominant_species",
+            "No dominant taxon is recorded.",
+            "Add the best defensible label or explain why the photos cannot support one.",
+        )
+
+    normalized_taxa: dict[str, list[str]] = {}
+    for prefix, label in taxon_labels:
+        normalized_taxa.setdefault(_taxon_key(label), []).append(prefix)
+    duplicates = [roles for roles in normalized_taxa.values() if len(roles) > 1]
+    if duplicates:
+        add(
+            "taxon.duplicate_roles",
+            "blocking",
+            "dominant_species",
+            "The same exact taxon label appears in more than one dominance role.",
+            "Keep each taxon in only its highest applicable dominance role.",
+        )
+
+    new_labels = IngestionService._split_taxon_labels(review.get("new_taxon_labels"))
+    new_flag = str(review.get("new_species_detected") or "").strip().casefold()
+    if new_labels and new_flag == "false":
+        add(
+            "new_taxon.flag_conflict",
+            "blocking",
+            "new_species_detected",
+            "New-taxon labels are present, but New taxon recorded is not Yes.",
+            "Choose Yes or remove labels that are not newly recorded for this site.",
+        )
+    elif new_labels and not new_flag:
+        add(
+            "new_taxon.decision_missing",
+            "warning",
+            "new_species_detected",
+            "Taxon labels are recorded, but the new-taxon decision is blank.",
+            "Choose Yes, No, or leave a completeness note if the site-history comparison is still unresolved.",
+        )
+    if new_flag == "true" and not new_labels:
+        add(
+            "new_taxon.labels_missing",
+            "blocking",
+            "new_taxon_labels",
+            "New taxon recorded is Yes, but no new label is named.",
+            "List every newly recorded label, separated by semicolons.",
+        )
+
+    history = site_taxon_history or {}
+    prior_taxa = {
+        _taxon_key(str(item.get("label") or ""))
+        for item in history.get("taxa", [])  # type: ignore[union-attr]
+        if isinstance(item, dict) and str(item.get("label") or "").strip()
+    }
+    history_count = int(history.get("observation_count") or 0)
+    previously_recorded = [label for label in new_labels if _taxon_key(label) in prior_taxa]
+    if previously_recorded:
+        add(
+            "new_taxon.previously_recorded",
+            "warning",
+            "new_taxon_labels",
+            f"Already present in earlier structured records: {'; '.join(previously_recorded)}.",
+            "Check spelling and synonyms, then remove labels that are not newly recorded.",
+        )
+    if new_flag == "true" and history_count == 0:
+        add(
+            "new_taxon.no_baseline",
+            "warning",
+            "new_species_detected",
+            "No earlier structured observation exists to verify a new-taxon claim.",
+            "Use Unknown unless dated field evidence outside this dataset establishes the prior baseline.",
+        )
+    if history_count:
+        novel_current = [label for _, label in taxon_labels if _taxon_key(label) not in prior_taxa]
+        named_new = {_taxon_key(label) for label in new_labels}
+        omitted_novel = [label for label in novel_current if _taxon_key(label) not in named_new]
+        if omitted_novel and new_flag in {"false", ""}:
+            add(
+                "new_taxon.possible_omission",
+                "warning",
+                "new_species_detected",
+                f"Not found by exact label in earlier site records: {'; '.join(omitted_novel)}.",
+                "Check earlier synonyms or morphotypes; if these are newly recorded, choose Yes and name them.",
+            )
+
+    photo_rows = list(photos)
+    unresolved = [photo for photo in photo_rows if photo.get("review_status") != "verified"]
+    if unresolved:
+        add(
+            "photos.roles_unresolved",
+            "blocking",
+            "photo_roles",
+            f"{len(unresolved)} photo role{'s are' if len(unresolved) != 1 else ' is'} not verified.",
+            "Verify every photo role before publishing the observation.",
+        )
+    verified_roles = {
+        str(photo.get("reviewed_type") or "")
+        for photo in photo_rows
+        if photo.get("review_status") == "verified"
+    }
+    missing_roles = [role for role in ("wide", "quadrat") if role not in verified_roles]
+    if photo_rows and missing_roles:
+        add(
+            "photos.protocol_roles_missing",
+            "warning",
+            "photo_roles",
+            f"Protocol role{'s are' if len(missing_roles) != 1 else ' is'} missing: {', '.join(missing_roles)}.",
+            "Confirm whether the batch is incomplete or whether a photo has the wrong role.",
+        )
+
+    if integrity and int(integrity.get("issue_count") or 0):
+        override = bool(integrity.get("override_confirmed"))
+        add(
+            "batch.integrity_override" if override else "batch.integrity_unresolved",
+            "warning" if override else "blocking",
+            "batch_integrity",
+            "The upload contains site/date integrity exceptions"
+            + (" that were manually acknowledged." if override else "."),
+            "Review the per-photo location and capture-date exceptions.",
+        )
+
+    if (
+        str(review.get("completion_status") or "") == "partially_reviewed"
+        and not str(review.get("completeness_notes") or "").strip()
+    ):
+        add(
+            "review.partial_without_note",
+            "warning",
+            "completeness_notes",
+            "The review is partial but does not explain what remains unavailable.",
+            "Add a concise completeness note before completing the review.",
+        )
+
+    blocking_count = sum(issue["severity"] == "blocking" for issue in issues)
+    warning_count = sum(issue["severity"] == "warning" for issue in issues)
+    status = "blocked" if blocking_count else "warnings" if warning_count else "passed"
+    return {
+        "status": status,
+        "issue_count": len(issues),
+        "blocking_count": blocking_count,
+        "warning_count": warning_count,
+        "verifier_id": OBSERVATION_VERIFIER_ID,
+        "verifier_version": OBSERVATION_VERIFIER_VERSION,
+        "issues": issues,
+    }
+
+
+def _taxon_key(value: str) -> str:
+    return " ".join(value.strip().casefold().split())
+
+
 def read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -589,6 +861,7 @@ class IngestionService:
         self._initialize_database()
         self._seed_canonical_store()
         self._ensure_observation_export_fields()
+        self._backfill_observation_verifications()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.paths.database)
@@ -865,6 +1138,46 @@ class IngestionService:
                 """
                 ALTER TABLE observation_reviews
                 ADD COLUMN new_taxon_labels TEXT NOT NULL DEFAULT '';
+                """,
+            )
+            self._apply_migration(
+                connection,
+                7,
+                "observation_verification_audit",
+                """
+                CREATE TABLE observation_verification_runs (
+                    verification_run_id TEXT PRIMARY KEY,
+                    batch_id TEXT NOT NULL REFERENCES batches(batch_id) ON DELETE CASCADE,
+                    review_updated_at TEXT NOT NULL,
+                    verifier_id TEXT NOT NULL,
+                    verifier_version TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    issue_count INTEGER NOT NULL,
+                    blocking_count INTEGER NOT NULL,
+                    warning_count INTEGER NOT NULL,
+                    checked_at TEXT NOT NULL
+                );
+
+                CREATE INDEX observation_verification_runs_batch_idx
+                ON observation_verification_runs(batch_id, checked_at);
+
+                CREATE TABLE observation_verification_issues (
+                    verification_issue_id TEXT PRIMARY KEY,
+                    verification_run_id TEXT NOT NULL
+                        REFERENCES observation_verification_runs(verification_run_id)
+                        ON DELETE CASCADE,
+                    rule_id TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    field_name TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    suggested_fix TEXT NOT NULL,
+                    resolution_status TEXT NOT NULL DEFAULT 'open',
+                    resolved_at TEXT,
+                    resolved_by TEXT
+                );
+
+                CREATE INDEX observation_verification_issues_run_idx
+                ON observation_verification_issues(verification_run_id, severity, rule_id);
                 """,
             )
             connection.execute(
@@ -1673,6 +1986,12 @@ class IngestionService:
                     integrity.status AS integrity_status,
                     integrity.issue_count AS integrity_issue_count,
                     integrity.warning_count AS integrity_warning_count,
+                    verification.status AS verification_status,
+                    verification.issue_count AS verification_issue_count,
+                    verification.blocking_count AS verification_blocking_count,
+                    verification.warning_count AS verification_warning_count,
+                    verification.review_updated_at AS verification_review_updated_at,
+                    verification.verifier_version AS verification_version,
                     (
                         SELECT job.status FROM machine_review_jobs job
                         WHERE job.batch_id = b.batch_id
@@ -1696,6 +2015,14 @@ class IngestionService:
                 LEFT JOIN observation_reviews r ON r.batch_id = b.batch_id
                 LEFT JOIN batch_integrity_checks integrity
                     ON integrity.batch_id = b.batch_id
+                LEFT JOIN observation_verification_runs verification
+                    ON verification.verification_run_id = (
+                        SELECT run.verification_run_id
+                        FROM observation_verification_runs run
+                        WHERE run.batch_id = b.batch_id
+                        ORDER BY run.checked_at DESC, run.verification_run_id DESC
+                        LIMIT 1
+                    )
                 GROUP BY b.batch_id
                 ORDER BY b.observation_date, CAST(b.site_id AS INTEGER), b.created_at
                 """
@@ -1781,6 +2108,30 @@ class IngestionService:
                 quality_counts["integrity_attention"] += 1
                 if severity != "blocking":
                     severity = "review"
+            verification_status = str(batch.get("verification_status") or "")
+            verification_stale = bool(batch.get("review_updated_at")) and (
+                batch.get("verification_review_updated_at")
+                != batch.get("review_updated_at")
+                or batch.get("verification_version") != OBSERVATION_VERIFIER_VERSION
+            )
+            if completion_status != "not_started" and (
+                not verification_status or verification_stale
+            ):
+                reasons.append("Automated verification is pending")
+                quality_counts["verification_pending"] += 1
+                if severity != "blocking":
+                    severity = "review"
+            elif int(batch.get("verification_blocking_count") or 0):
+                count = int(batch.get("verification_blocking_count") or 0)
+                reasons.append(f"{count} blocking verification issue(s)")
+                quality_counts["verification_blocked"] += 1
+                severity = "blocking"
+            elif int(batch.get("verification_warning_count") or 0):
+                count = int(batch.get("verification_warning_count") or 0)
+                reasons.append(f"{count} automated verification warning(s)")
+                quality_counts["verification_warnings"] += 1
+                if severity != "blocking":
+                    severity = "review"
 
             missing_field_count = sum(
                 (
@@ -1796,6 +2147,7 @@ class IngestionService:
                 "photo_count": int(batch.get("stored_photo_count") or 0),
                 "verified_photo_count": int(batch.get("reviewed_count") or 0),
                 "missing_field_count": missing_field_count,
+                "verification_status": verification_status or "not_run",
             }
             matrix_by_site.setdefault(str(batch["site_id"]), {})[
                 str(batch["observation_date"])
@@ -2244,6 +2596,132 @@ class IngestionService:
             "taxa": taxa,
         }
 
+    @staticmethod
+    def _latest_observation_verification(
+        connection: sqlite3.Connection, batch_id: str
+    ) -> dict[str, object] | None:
+        run = connection.execute(
+            """
+            SELECT * FROM observation_verification_runs
+            WHERE batch_id = ?
+            ORDER BY checked_at DESC, verification_run_id DESC
+            LIMIT 1
+            """,
+            (batch_id,),
+        ).fetchone()
+        if run is None:
+            return None
+        issues = connection.execute(
+            """
+            SELECT * FROM observation_verification_issues
+            WHERE verification_run_id = ?
+            ORDER BY
+                CASE severity WHEN 'blocking' THEN 0 ELSE 1 END,
+                rule_id,
+                verification_issue_id
+            """,
+            (run["verification_run_id"],),
+        ).fetchall()
+        return {**dict(run), "issues": [dict(issue) for issue in issues]}
+
+    def verify_observation_review(self, batch_id: str) -> dict[str, object]:
+        """Persist an append-only deterministic verification run for one review."""
+
+        batch = self.get_batch(batch_id)
+        review = batch.get("observation_review")
+        if not isinstance(review, dict):
+            raise IngestionError("Start the observation review before running verification.")
+        review_updated_at = str(review.get("updated_at") or "")
+        if not review_updated_at:
+            raise IngestionError("The observation review has no audit timestamp.")
+
+        result = verify_observation_values(
+            review,
+            photos=batch.get("photos", []),  # type: ignore[arg-type]
+            integrity=batch.get("integrity")
+            if isinstance(batch.get("integrity"), dict)
+            else None,
+            site_taxon_history=batch.get("site_taxon_history")
+            if isinstance(batch.get("site_taxon_history"), dict)
+            else None,
+        )
+        verification_run_id = f"observation_verification_{uuid.uuid4().hex}"
+        checked_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO observation_verification_runs (
+                    verification_run_id, batch_id, review_updated_at,
+                    verifier_id, verifier_version, status, issue_count,
+                    blocking_count, warning_count, checked_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    verification_run_id,
+                    batch_id,
+                    review_updated_at,
+                    result["verifier_id"],
+                    result["verifier_version"],
+                    result["status"],
+                    result["issue_count"],
+                    result["blocking_count"],
+                    result["warning_count"],
+                    checked_at,
+                ),
+            )
+            for issue in result["issues"]:  # type: ignore[union-attr]
+                connection.execute(
+                    """
+                    INSERT INTO observation_verification_issues (
+                        verification_issue_id, verification_run_id, rule_id,
+                        severity, field_name, message, suggested_fix
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"observation_verification_issue_{uuid.uuid4().hex}",
+                        verification_run_id,
+                        issue["rule_id"],
+                        issue["severity"],
+                        issue["field_name"],
+                        issue["message"],
+                        issue["suggested_fix"],
+                    ),
+                )
+            persisted = self._latest_observation_verification(connection, batch_id)
+        if persisted is None:
+            raise IngestionError("Observation verification could not be saved.")
+        return persisted
+
+    def _backfill_observation_verifications(self) -> None:
+        """Verify existing reviews once per rule version or review revision."""
+
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT review.batch_id, review.updated_at,
+                       latest.review_updated_at AS verified_review_updated_at,
+                       latest.verifier_version
+                FROM observation_reviews review
+                LEFT JOIN observation_verification_runs latest
+                  ON latest.verification_run_id = (
+                      SELECT run.verification_run_id
+                      FROM observation_verification_runs run
+                      WHERE run.batch_id = review.batch_id
+                      ORDER BY run.checked_at DESC, run.verification_run_id DESC
+                      LIMIT 1
+                  )
+                ORDER BY review.updated_at
+                """
+            ).fetchall()
+        pending = [
+            str(row["batch_id"])
+            for row in rows
+            if row["verified_review_updated_at"] != row["updated_at"]
+            or row["verifier_version"] != OBSERVATION_VERIFIER_VERSION
+        ]
+        for batch_id in pending:
+            self.verify_observation_review(batch_id)
+
     def get_batch(self, batch_id: str) -> dict[str, object]:
         with self._connection() as connection:
             batch = connection.execute(
@@ -2295,6 +2773,9 @@ class IngestionService:
                 """,
                 (batch_id,),
             ).fetchone()
+            latest_observation_verification = self._latest_observation_verification(
+                connection, batch_id
+            )
         result = dict(batch)
         events_by_photo: dict[str, list[dict[str, object]]] = {}
         for event in review_events:
@@ -2351,6 +2832,7 @@ class IngestionService:
             if latest_machine_review_job is not None
             else None
         )
+        result["latest_observation_verification"] = latest_observation_verification
         latest_machine_review = next(
             (
                 event
@@ -2940,6 +3422,7 @@ class IngestionService:
                 "UPDATE batches SET status = ? WHERE batch_id = ?",
                 ("ready" if finalize else "observation_review", batch_id),
             )
+        self.verify_observation_review(batch_id)
         return self.get_batch(batch_id)
 
     def backfill_review_events(
@@ -3081,6 +3564,21 @@ class IngestionService:
             if batch["status"] != "ready":
                 raise IngestionError(
                     "Photo roles and the observation review must be complete before publication."
+                )
+            review = batch.get("observation_review")
+            verification = batch.get("latest_observation_verification")
+            if not isinstance(review, dict):
+                raise IngestionError("Complete the observation review before publication.")
+            if (
+                not isinstance(verification, dict)
+                or verification.get("review_updated_at") != review.get("updated_at")
+                or verification.get("verifier_version")
+                != OBSERVATION_VERIFIER_VERSION
+            ):
+                verification = self.verify_observation_review(batch_id)
+            if int(verification.get("blocking_count") or 0):
+                raise IngestionError(
+                    "Resolve blocking automated verification issues before publishing."
                 )
 
             run_id = f"publication_{uuid.uuid4().hex}"

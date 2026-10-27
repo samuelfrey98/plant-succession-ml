@@ -1,14 +1,15 @@
 # Project Handoff
 
-This repository was scaffolded from an active project note describing a field-data and machine-learning portfolio project for plant succession monitoring.
+Version 1.0.0 packages the working field-photo ingestion, review, verification, publication, dashboard,
+and reproducible-demo workflow for plant succession monitoring.
 
 The public-facing version should stay honest about current maturity:
 
-- field sites have been selected and mapped
-- observation and disturbance schemas are being designed
-- repeatable photo protocols are being developed
-- early observations are being collected
-- future work includes computer vision and geospatial analysis
+- 11 sites and 75 observations are represented in sanitized public metadata
+- all 596 historical photo roles have been visually reviewed
+- 30 observations are fully reviewed and 45 are partially reviewed
+- optional general-purpose vision drafts support review, but no custom ecological model is trained
+- the public demo uses synthetic images and disposable, read-only state
 
 The public-facing version should not claim:
 
@@ -18,11 +19,11 @@ The public-facing version should not claim:
 - results are scientifically conclusive
 - the project is affiliated with iNaturalist, Phoenixville, or any land manager
 
-Immediate next improvements:
+Post-v1.0 priorities:
 
-1. Add sanitized screenshots to `docs/` or the README if public sharing is acceptable.
-2. Replace sample rows with a small intentionally public subset of real observations.
-3. Add a first exploratory plot once several observation dates exist.
-4. Add photo-manifest generation from a Drive export or local photo folder.
-5. Add GitHub Actions validation once the repository is pushed.
+1. Add CI for unit tests, CSV validation, and demo-seed smoke tests.
+2. Add role-based reviewer identities if multiple human reviewers begin using the service.
+3. Build evaluation sets for cover estimation and taxon triage before training a custom model.
+4. Add deployment observability and automated encrypted backups for the private service.
+5. Publish a hosted demo only after the tagged release is pushed to GitHub.
 

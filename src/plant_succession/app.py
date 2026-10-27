@@ -25,6 +25,21 @@ DEFAULT_PUBLIC_DIR = ROOT / "data" / "public"
 REVIEWER_ID = os.environ.get("PLANT_REVIEWER_ID", "project_owner")
 
 
+def environment_flag(name: str) -> bool:
+    """Interpret common truthy environment values consistently."""
+
+    return os.environ.get(name, "").strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def demo_configuration() -> dict[str, object]:
+    demo_mode = environment_flag("PLANT_DEMO_MODE")
+    return {
+        "demo_mode": demo_mode,
+        "read_only": demo_mode and environment_flag("PLANT_DEMO_READ_ONLY"),
+        "synthetic_batches": demo_mode,
+    }
+
+
 def initialize_public_data(source_dir: Path, public_dir: Path) -> None:
     """Seed missing public CSVs without overwriting a durable dataset."""
 
@@ -93,16 +108,28 @@ async def require_authentication(request: Request, call_next) -> Response:
     """Protect hosted data while leaving local development and health checks simple."""
 
     password = os.environ.get("PLANT_INGESTION_PASSWORD", "")
-    if not password or request.url.path == "/api/health":
-        return await call_next(request)
-    username = os.environ.get("PLANT_INGESTION_USERNAME", "admin")
-    if valid_basic_auth(request.headers.get("Authorization"), username, password):
-        return await call_next(request)
-    return JSONResponse(
-        status_code=401,
-        content={"detail": "Authentication required."},
-        headers={"WWW-Authenticate": 'Basic realm="Plant Succession Ingest"'},
-    )
+    if password and request.url.path != "/api/health":
+        username = os.environ.get("PLANT_INGESTION_USERNAME", "admin")
+        if not valid_basic_auth(request.headers.get("Authorization"), username, password):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Authentication required."},
+                headers={"WWW-Authenticate": 'Basic realm="Plant Succession Ingest"'},
+            )
+    if (
+        demo_configuration()["read_only"]
+        and request.method not in {"GET", "HEAD", "OPTIONS"}
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": (
+                    "The public demo is read-only. "
+                    "Run it locally with --writable to try edits."
+                )
+            },
+        )
+    return await call_next(request)
 
 
 class ReviewUpdate(BaseModel):
@@ -157,6 +184,11 @@ def index() -> FileResponse:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "plant-succession-ingest"}
+
+
+@app.get("/api/config")
+def configuration() -> dict[str, object]:
+    return demo_configuration()
 
 
 @app.get("/api/sites")
@@ -361,6 +393,14 @@ def save_observation_review(
 def generate_machine_observation_review(batch_id: str) -> dict[str, object]:
     try:
         return service.generate_machine_observation_review(batch_id)
+    except IngestionError as error:
+        raise bad_request(error) from error
+
+
+@app.post("/api/batches/{batch_id}/verify-observation")
+def verify_observation_review(batch_id: str) -> dict[str, object]:
+    try:
+        return service.verify_observation_review(batch_id)
     except IngestionError as error:
         raise bad_request(error) from error
 

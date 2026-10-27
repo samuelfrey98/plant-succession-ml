@@ -1,30 +1,32 @@
 # Portfolio Notes
 
-This repository is positioned as an applied ecology, biodiversity-data, and ML-readiness project.
+This repository is positioned as a field-data platform and human-in-the-loop ML infrastructure project,
+using longitudinal ecology as the real operating domain.
 
 ## Strong Public Framing
 
 Use this framing:
 
-> I am building a small longitudinal field dataset to track plant succession and disturbance response in urban edge habitats. The project emphasizes repeatable observation design, photo protocols, ecological data modeling, validation, and a staged roadmap toward computer-vision-assisted change detection.
+> I built a local-first field-photo ingestion and review pipeline for longitudinal vegetation monitoring.
+> It combines content-addressed uploads, EXIF-assisted batch inference, append-only human and machine
+> provenance, deterministic publication gates, versioned public data products, and a synthetic read-only demo.
 
 ## What To Show
 
-Good portfolio screenshots:
+Good portfolio evidence:
 
-- Google My Maps or Google Earth view with the 10 monitoring sites
-- Google Form observation fields
-- Google Sheets schema tabs
-- Drive folder organization for photo responses
-- a sanitized sample CSV
-- validation script output
-- a simple cover-summary notebook
+- the live pipeline dashboard in `docs/screenshots/demo_dashboard.png`
+- the verification and observation-review workspace in `docs/screenshots/demo_observation_review.png`
+- the responsive dashboard in `docs/screenshots/demo_dashboard_mobile.png`
+- the compact architecture and lineage record in `docs/architecture.md`
+- the synthetic four-state demo described in `docs/public_demo.md`
+- validation, test, and deterministic-export commands
 
 ## What To Avoid
 
 Avoid implying:
 
-- the model is already trained
+- a custom ecological model is already trained
 - results are conclusive
 - the work is affiliated with iNaturalist
 - exact locations are public by default
@@ -32,5 +34,7 @@ Avoid implying:
 
 ## Short Resume Bullet
 
-Built an applied ecology data pipeline for monitoring plant succession in disturbed urban edge habitats, including geospatial site tracking, repeatable field photography, normalized observation schemas, disturbance-event logging, CSV validation, and a roadmap toward computer-vision-based vegetation change detection.
+Built a local-first field-photo data platform with EXIF-assisted ingestion, content-hash deduplication,
+append-only human and model provenance, deterministic publication gates, versioned CSV releases, and a
+synthetic public demo for longitudinal vegetation monitoring.
 
