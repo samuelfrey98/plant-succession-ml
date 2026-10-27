@@ -81,6 +81,8 @@ derived only from explicit field notes or separately documented photo evidence.
 
 ## Reproducible Demo
 
+**Live demo:** [plant-succession-demo.onrender.com](https://plant-succession-demo.onrender.com)
+
 Run a public-safe, read-only copy without using the private photo archive or operational database:
 
 ```bash
