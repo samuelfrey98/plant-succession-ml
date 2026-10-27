@@ -14,10 +14,10 @@ been visually reviewed; camera sequence alone is not treated as evidence of phot
 refreshing source-derived metadata.
 
 `public/observations.csv` contains one deterministic observation per non-empty site/date photo batch.
-Two records have completed human review and 73 remain partially reviewed: their supported fields are
-retained, while missing or uncertain historical values remain explicit. The 63 Drive-archive observations
-include assistant-generated visual estimates; newer ingestion-app observations remain open for further
-human or machine review.
+Thirty records have completed human review and 45 remain partially reviewed: their supported fields are
+retained, while missing or uncertain historical values remain explicit. Historical Drive-archive records
+preserve post-hoc estimates and uncertainty; newer ingestion-app observations use the same canonical schema
+and append-only review provenance.
 
 `public/field_notes.csv` preserves the source wording and scope of field notes. `public/site_checks.csv`
 records only site-specific assessments explicitly supported by those notes. A site omitted from a note

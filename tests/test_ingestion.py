@@ -2,6 +2,7 @@ import base64
 import csv
 import io
 import json
+import os
 import shutil
 import sqlite3
 import sys
@@ -9,6 +10,7 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -29,11 +31,17 @@ from plant_succession.ingestion import (  # noqa: E402
     infer_photo_type,
     read_csv,
     suggest_batch_metadata,
+    verify_observation_values,
     write_csv,
 )
 from plant_succession.google_sheets import GoogleSheetsSyncError  # noqa: E402
 from plant_succession.machine_review import MachineReviewError  # noqa: E402
-from plant_succession.app import initialize_public_data, valid_basic_auth  # noqa: E402
+from plant_succession.app import (  # noqa: E402
+    demo_configuration,
+    initialize_public_data,
+    valid_basic_auth,
+)
+from plant_succession.demo import prepare_demo_workspace  # noqa: E402
 from plant_succession.validate import validate_public_photo_data  # noqa: E402
 
 
@@ -158,6 +166,72 @@ class IngestionServiceTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_demo_workspace_is_isolated_seeded_and_reusable(self):
+        demo_root = self.root / "demo"
+        manifest = prepare_demo_workspace(
+            demo_root,
+            source_public_dir=ROOT / "data" / "public",
+            schema_dir=ROOT / "data" / "schema",
+            reset=True,
+        )
+        self.assertTrue(manifest["newly_created"])
+        self.assertEqual(Path(manifest["root"]), demo_root.resolve())
+
+        demo_service = IngestionService(
+            IngestionPaths(
+                public_dir=demo_root / "public",
+                schema_dir=ROOT / "data" / "schema",
+                state_dir=demo_root / "state",
+                archive_dir=demo_root / "photos",
+                site_anchor_file=demo_root / "site_anchors.csv",
+            )
+        )
+        statuses = [batch["status"] for batch in demo_service.list_batches()]
+        self.assertEqual(
+            {status: statuses.count(status) for status in set(statuses)},
+            {
+                "needs_review": 1,
+                "observation_review": 1,
+                "ready": 1,
+                "published": 1,
+            },
+        )
+        for batch in demo_service.list_batches():
+            detail = demo_service.get_batch(str(batch["batch_id"]))
+            self.assertEqual(len(detail["photos"]), 3)
+            for photo in detail["photos"]:
+                self.assertTrue(demo_service.preview_path(str(photo["photo_id"])).is_file())
+        self.assertEqual(
+            validate_public_photo_data(demo_root / "public", ROOT / "data" / "schema"),
+            [],
+        )
+
+        reused = prepare_demo_workspace(
+            demo_root,
+            source_public_dir=ROOT / "data" / "public",
+            schema_dir=ROOT / "data" / "schema",
+        )
+        self.assertFalse(reused["newly_created"])
+
+    def test_demo_configuration_only_enables_read_only_inside_demo_mode(self):
+        with patch.dict(
+            os.environ,
+            {"PLANT_DEMO_MODE": "true", "PLANT_DEMO_READ_ONLY": "yes"},
+        ):
+            self.assertEqual(
+                demo_configuration(),
+                {
+                    "demo_mode": True,
+                    "read_only": True,
+                    "synthetic_batches": True,
+                },
+            )
+        with patch.dict(
+            os.environ,
+            {"PLANT_DEMO_MODE": "false", "PLANT_DEMO_READ_ONLY": "true"},
+        ):
+            self.assertFalse(demo_configuration()["read_only"])
 
     def test_filename_labeling_is_explicit_and_conservative(self):
         self.assertEqual(infer_photo_type("wide.HEIC").photo_type, "wide")
@@ -510,11 +584,11 @@ class IngestionServiceTests(unittest.TestCase):
 
     def test_canonical_store_is_versioned_and_exports_over_changed_csvs(self):
         status = self.service.canonical_store_status()
-        self.assertEqual(status["schema_version"], 6)
-        self.assertEqual(status["expected_schema_version"], 6)
+        self.assertEqual(status["schema_version"], 7)
+        self.assertEqual(status["expected_schema_version"], 7)
         self.assertEqual(
             {migration["version"] for migration in status["migrations"]},
-            {1, 2, 3, 4, 5, 6},
+            {1, 2, 3, 4, 5, 6, 7},
         )
         self.assertIn(
             "observations.csv",
@@ -540,7 +614,7 @@ class IngestionServiceTests(unittest.TestCase):
         self.assertEqual(csv_rows(path)[0]["notes"], canonical_note)
 
         reloaded = IngestionService(self.service.paths)
-        self.assertEqual(len(reloaded.canonical_store_status()["migrations"]), 6)
+        self.assertEqual(len(reloaded.canonical_store_status()["migrations"]), 7)
 
     def test_site_taxon_history_includes_ranked_and_named_new_taxa(self):
         earlier = self.service.create_batch(
@@ -591,7 +665,7 @@ class IngestionServiceTests(unittest.TestCase):
         backup = self.service.backup_database(self.root / "backups")
         backup_path = Path(backup["path"])
         self.assertTrue(backup_path.exists())
-        self.assertEqual(backup["schema_versions"], [1, 2, 3, 4, 5, 6])
+        self.assertEqual(backup["schema_versions"], [1, 2, 3, 4, 5, 6, 7])
         with closing(sqlite3.connect(backup_path)) as connection:
             self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         manifest = json.loads(Path(backup["manifest"]).read_text(encoding="utf-8"))
@@ -642,8 +716,112 @@ class IngestionServiceTests(unittest.TestCase):
             row for row in dashboard["longitudinal"]["sites"] if row["site_id"] == "3"
         )
         self.assertEqual(series["points"][0]["vegetation_cover_pct"], 42)
-        self.assertEqual(dashboard["issues"][0]["severity"], "follow_up")
+        self.assertEqual(dashboard["issues"][0]["severity"], "review")
         self.assertIn("Dominant taxon is missing", dashboard["issues"][0]["reasons"])
+        self.assertIn(
+            "automated verification warning(s)",
+            " ".join(dashboard["issues"][0]["reasons"]),
+        )
+
+    def test_observation_verifier_treats_standing_dead_as_independent_cover(self):
+        verification = verify_observation_values(
+            {
+                "estimated_total_vegetation_cover_pct": 55,
+                "bare_ground_pct": 20,
+                "gravel_rock_pct": 10,
+                "litter_mulch_woodchip_pct": 15,
+                "standing_dead_pct": 80,
+                "dominant_species": "Testus alpha",
+                "dominant_taxon_rank": "species",
+                "dominant_species_confidence": "confident",
+                "completion_status": "reviewed",
+            }
+        )
+
+        self.assertEqual(verification["status"], "passed")
+        self.assertEqual(verification["issue_count"], 0)
+
+    def test_observation_verifier_flags_blocking_cross_field_conflicts(self):
+        verification = verify_observation_values(
+            {
+                "estimated_total_vegetation_cover_pct": 60,
+                "bare_ground_pct": 30,
+                "gravel_rock_pct": 20,
+                "litter_mulch_woodchip_pct": 10,
+                "dominant_species": "Testus alpha",
+                "dominant_taxon_rank": "species",
+                "dominant_species_confidence": "likely",
+                "secondary_species": "Testus alpha",
+                "secondary_taxon_rank": "species",
+                "secondary_species_confidence": "likely",
+                "new_species_detected": "true",
+                "completion_status": "reviewed",
+            }
+        )
+        rules = {issue["rule_id"] for issue in verification["issues"]}
+
+        self.assertEqual(verification["status"], "blocked")
+        self.assertIn("cover.surface_sum", rules)
+        self.assertIn("taxon.duplicate_roles", rules)
+        self.assertIn("new_taxon.labels_missing", rules)
+
+        conflicting_flag = verify_observation_values(
+            {"new_taxon_labels": "Testus beta", "new_species_detected": "false"}
+        )
+        self.assertIn(
+            "new_taxon.flag_conflict",
+            {issue["rule_id"] for issue in conflicting_flag["issues"]},
+        )
+
+    def test_verification_runs_are_persisted_and_publish_blocks_until_fixed(self):
+        batch = self.service.create_batch(
+            "4",
+            "2026-10-23",
+            "",
+            [
+                ("wide.jpg", image_bytes((40, 90, 50))),
+                ("quadrat.jpg", image_bytes((45, 95, 55))),
+            ],
+        )
+        batch = self.service.accept_explicit_suggestions(batch["batch_id"])
+        invalid_review = {
+            "estimated_total_vegetation_cover_pct": 60,
+            "bare_ground_pct": 30,
+            "gravel_rock_pct": 20,
+            "litter_mulch_woodchip_pct": 10,
+            "dominant_species": "Testus alpha",
+            "dominant_taxon_rank": "species",
+            "dominant_species_confidence": "confident",
+            "new_taxon_labels": "Testus alpha",
+            "new_species_detected": "true",
+            "completion_status": "reviewed",
+        }
+        batch = self.service.save_observation_review(
+            batch["batch_id"], invalid_review, finalize=True
+        )
+
+        self.assertEqual(batch["latest_observation_verification"]["status"], "blocked")
+        with self.assertRaisesRegex(IngestionError, "blocking automated verification"):
+            self.service.publish_batch(batch["batch_id"])
+
+        first_run_id = batch["latest_observation_verification"]["verification_run_id"]
+        rerun = self.service.verify_observation_review(batch["batch_id"])
+        self.assertNotEqual(rerun["verification_run_id"], first_run_id)
+        with closing(sqlite3.connect(self.service.paths.database)) as connection:
+            run_count = connection.execute(
+                "SELECT COUNT(*) FROM observation_verification_runs WHERE batch_id = ?",
+                (batch["batch_id"],),
+            ).fetchone()[0]
+        self.assertEqual(run_count, 2)
+
+        invalid_review["gravel_rock_pct"] = 5
+        invalid_review["litter_mulch_woodchip_pct"] = 5
+        batch = self.service.save_observation_review(
+            batch["batch_id"], invalid_review, finalize=True
+        )
+        self.assertEqual(batch["latest_observation_verification"]["status"], "passed")
+        published = self.service.publish_batch(batch["batch_id"])
+        self.assertEqual(published["status"], "published")
 
     def test_metadata_suggestion_votes_for_nearest_site_and_capture_date(self):
         anchors = [

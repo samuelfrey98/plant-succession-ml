@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import sys
 
@@ -15,16 +16,32 @@ from plant_succession.validate import validate_dataset, validate_public_photo_da
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--public-dir",
+        type=Path,
+        default=ROOT / "data" / "public",
+        help="Public export directory to validate.",
+    )
+    parser.add_argument(
+        "--skip-sample",
+        action="store_true",
+        help="Validate only the selected public export directory.",
+    )
+    args = parser.parse_args()
     schema_dir = ROOT / "data" / "schema"
-    issues = validate_dataset(ROOT / "data" / "sample", schema_dir)
-    issues.extend(validate_public_photo_data(ROOT / "data" / "public", schema_dir))
+    issues = []
+    if not args.skip_sample:
+        issues.extend(validate_dataset(ROOT / "data" / "sample", schema_dir))
+    issues.extend(validate_public_photo_data(args.public_dir, schema_dir))
     if issues:
         print(f"Found {len(issues)} validation issue(s):")
         for issue in issues:
             print(f"- {issue.format()}")
         return 1
 
-    print("Validation passed: sample and public CSVs match schemas and project rules.")
+    scope = "public CSVs" if args.skip_sample else "sample and public CSVs"
+    print(f"Validation passed: {scope} match schemas and project rules.")
     return 0
 
 

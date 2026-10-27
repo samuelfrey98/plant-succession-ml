@@ -252,6 +252,21 @@ schema only during validated publication.
 Published batches remain reviewable. Saving a new observation version reopens only the metadata stage;
 republishing updates the existing observation row while retaining the original photo IDs and archive files.
 
+### Automated Verification
+
+Every observation save automatically runs a versioned, deterministic ruleset. This check is local and
+does not send photos or metadata to a model. It checks percentage ranges, the approximately 100% total for
+the four ground-surface categories, duplicate dominance labels, new-taxon consistency, photo-role
+completeness, and acknowledged upload-integrity exceptions. Standing dead is checked as its own 0-100%
+field and is deliberately excluded from the ground-surface total because it may overlap those categories.
+
+Each run and each issue are append-only SQLite audit records tied to the exact observation-review update
+timestamp and verifier version. Saving a review creates a new run; **Run again** adds another run without
+erasing history. Warnings identify records that deserve attention but remain publishable. Blocking findings
+must be corrected before publication. The **Verification** queue filter collects saved observations whose
+latest result is not a clean pass. These checks improve consistency but do not verify ecological truth,
+species identity, or whether an unphotographed event occurred.
+
 ### Optional Machine Draft Queue
 
 The ingestion workspace can queue a first-pass draft from a general-purpose vision model after every photo
@@ -291,7 +306,8 @@ files are ignored by Git.
 
 ## Publication Guarantees
 
-A batch cannot publish while any photo is unresolved or its observation review is incomplete. Publication then:
+A batch cannot publish while any photo is unresolved, its observation review is incomplete, or its latest
+automated verification has blocking findings. Publication refreshes a stale verification result and then:
 
 1. Copies originals into the private deterministic archive.
 2. Builds candidate versions of `photo_manifest.csv`, `observations.csv`, and
@@ -342,12 +358,13 @@ FastAPI publishes interactive API documentation at `http://127.0.0.1:8765/docs`.
 - `POST /api/machine-review/jobs/retry-failed`: retry failed, still-incomplete observations
 - `POST /api/batches/{batch_id}/machine-review`: generate and audit a model suggestion
 - `PUT /api/batches/{batch_id}/observation-review`: save or complete the batch observation review
+- `POST /api/batches/{batch_id}/verify-observation`: append a deterministic verification run
 - `POST /api/batches/{batch_id}/publish`: validate and publish a ready batch
 - `GET /api/dashboard`: retrieve operational metrics, quality issues, provenance, site/date coverage, and longitudinal series
 
 ## Current Boundary
 
 This version automates ingestion, metadata normalization, photo-role review, selective model-assisted
-observation drafts with durable queue state, structured human review, and publication. Disturbance events remain a separate
-evidence-backed workflow. Model output is advisory and cannot cross the publication boundary without a
-human-completed observation review.
+observation drafts with durable queue state, structured human review, deterministic cross-field verification,
+and publication. Disturbance events remain a separate evidence-backed workflow. Model output is advisory and
+cannot cross the publication boundary without a human-completed observation review.

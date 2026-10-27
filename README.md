@@ -9,6 +9,40 @@ archive can support later computer-vision experiments, but the current portfolio
 
 **11 sites | 75 photo-backed observations | 596 verified field photos | May 25-October 18, 2026**
 
+## What This Demonstrates
+
+- A local-first ingestion service that turns mixed field-photo uploads into traceable observation batches
+- Human-in-the-loop review where deterministic checks and optional model drafts support, but never replace, reviewer decisions
+- Reproducible data contracts spanning private operational storage, append-only provenance, and versioned public CSV products
+- Production-minded boundaries for secrets, exact coordinates, raw photos, retries, failure states, deployment, and a synthetic public demo
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A[Field photos<br/>and notes] --> B[FastAPI<br/>ingestion service]
+    B --> C[(Private SQLite<br/>and photo archive)]
+    C --> D[Rules and optional<br/>vision draft]
+    D --> E[Human review]
+    E --> F[Validated<br/>publication]
+    F --> G[Versioned<br/>public CSVs]
+    F -. optional .-> H[Google Sheets<br/>mirror]
+    G --> I[Dashboard and<br/>analysis outputs]
+```
+
+SQLite is the canonical operational store. Public CSVs are deterministic, sanitized release artifacts;
+Google Sheets is an optional one-way mirror rather than a second source of truth. See
+[docs/architecture.md](docs/architecture.md) for data lineage, trust boundaries, failure behavior, and
+the engineering decisions behind this split.
+
+## Product Tour
+
+The hosted-demo seed uses synthetic photos and disposable state while exercising the same pipeline and UI.
+
+![Synthetic public demo dashboard](docs/screenshots/demo_dashboard.png)
+
+![Observation review with deterministic verification](docs/screenshots/demo_observation_review.png)
+
 ## Project Status
 
 The photo archive has been inventoried and normalized into a public metadata manifest. One
@@ -23,9 +57,10 @@ Current implemented assets:
 - Append-only review events that keep rule/model suggestions separate from human verification
 - A batch-level observation review stage for cover estimates, uncertainty-aware taxon labels, and explicit completeness
 - Optional vision-model drafts with per-field confidence, evidence, and human approval before publication
+- Versioned automated verification with append-only findings and blocking publish gates for cross-field conflicts
 - A read-only published-data catalog with CSV downloads and append-only publication-run lineage
 - An optional retryable Google Sheets mirror that cannot roll back a valid local publication
-- A structured Google Form for site observations
+- A retired Google Forms prototype retained only as historical design context
 - A private Google Sheets workbook used during the historical review and backfill
 - Repeatable photo protocols for wide, quadrat, close-up, and context photos
 - Initial schema design for ecological observations and disturbance history
@@ -44,6 +79,25 @@ The project does not yet include a trained machine-learning model. Camera order 
 reliable photo label; all published roles were assigned through visual review. Disturbance records are
 derived only from explicit field notes or separately documented photo evidence.
 
+## Reproducible Demo
+
+Run a public-safe, read-only copy without using the private photo archive or operational database:
+
+```bash
+.venv/bin/pip install -e .
+.venv/bin/python scripts/run_demo.py --reset
+```
+
+Open `http://127.0.0.1:8766`. The command copies the committed public CSVs into ignored `.demo/`
+storage and generates clearly marked synthetic photos for one batch at each major workflow stage:
+photo review, observation review, ready to publish, and published. It never writes to `data/public`,
+`data/raw`, or `photos`. Add `--writable` to exercise edits locally; run `--reset` again to return to
+the reproducible baseline.
+
+[`render.demo.yaml`](render.demo.yaml) provides a separate free, read-only Render Blueprint without a
+persistent disk or secret keys. See [docs/public_demo.md](docs/public_demo.md) for the isolation contract,
+verification commands, and deployment steps.
+
 ## Ingestion Service
 
 New monitoring rounds can be staged and reviewed through an upload app instead of Google Forms or
@@ -56,6 +110,10 @@ show confidence and distance, and the user confirms or corrects both fields befo
 gate names individual site/date exceptions and requires an explicit override before they can enter review.
 After photo roles are resolved, the batch enters observation review. Drafts remain private, blank values
 remain null, and only an explicitly completed review can proceed to validated publication.
+
+Each saved observation is also checked by a local deterministic ruleset. Warnings remain visible for human
+judgment, while contradictions such as invalid cover totals or duplicate dominance labels block publication
+until corrected. Verification runs are append-only and tied to the exact review revision they checked.
 
 The review queue can optionally send only user-selected observations to a configured vision model for a
 structured first pass. Durable job states support background processing and retry, while completed human
@@ -73,7 +131,9 @@ summarizes pipeline state, review provenance, missing key fields, site/date cove
 vegetation-cover series. Quality rows and matrix cells link back to the exact batch review, keeping monitoring
 and correction in the same workflow.
 
-![Plant Succession local ingestion queue](docs/screenshots/ingestion_app.png)
+The same dashboard is responsive for field use on a phone:
+
+<img src="docs/screenshots/demo_dashboard_mobile.png" alt="Synthetic public demo dashboard on mobile" width="390">
 
 ```bash
 .venv/bin/pip install -e .
@@ -209,7 +269,8 @@ The project currently uses:
 - Post-hoc visual percent-cover estimates where the archived photos support them
 
 Google Forms was the original collection design, but bulk photo uploads proved too slow in practice. The
-real dataset is therefore reconstructed from the Drive archive with explicit provenance and missingness.
+historical dataset was reconstructed from the Drive archive with explicit provenance and missingness; new
+rounds now enter through the local ingestion service.
 
 Raw photos, private Drive exports, and exact site data should not be committed directly to this public repository unless intentionally sanitized.
 
@@ -289,7 +350,7 @@ field_name,data_type,required,allowed_values,description,example
 
 - Species identifications are field estimates and are not expert-verified unless stated.
 - Cover values are rounded post-hoc visual estimates rather than measurements made in fixed quadrats.
-- Photo workflows are being revised because Google Forms file uploads can be awkward for large iPhone images.
+- Historical observations were reconstructed post hoc, so completeness varies with the surviving photo evidence.
 - Successional-stage labels are interpretive and should not replace raw cover and taxon fields.
 - No trained ML model is included yet.
 - This is an independent portfolio project, not an official iNaturalist, municipal, or land-manager project.

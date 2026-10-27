@@ -10,6 +10,7 @@ const state = {
   reviewView: "photos",
   machineReviewConfig: null,
   machineReviewLoading: false,
+  verificationLoading: false,
   machineQueue: null,
   machineQueueLoading: false,
   machineQueueSubmitting: false,
@@ -21,6 +22,7 @@ const state = {
   dashboardLoading: false,
   dashboardSiteFilter: "",
   dashboardRefreshTimer: null,
+  appConfig: null,
 };
 
 const photoTypes = [
@@ -38,11 +40,31 @@ function iconRefresh() {
 }
 
 async function api(path, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  if (state.appConfig?.read_only && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+    throw new Error("The public demo is read-only. Run it locally with --writable to try edits.");
+  }
   const response = await fetch(path, options);
   let body = {};
   try { body = await response.json(); } catch (_) { body = {}; }
   if (!response.ok) throw new Error(body.detail || `Request failed (${response.status})`);
   return body;
+}
+
+async function loadAppConfig() {
+  state.appConfig = await api("/api/config");
+  const banner = document.querySelector("#demo-banner");
+  const demoMode = Boolean(state.appConfig?.demo_mode);
+  document.body.classList.toggle("demo-mode", demoMode);
+  document.body.classList.toggle("demo-readonly", Boolean(state.appConfig?.read_only));
+  banner.classList.toggle("hidden", !demoMode);
+  if (demoMode) {
+    document.querySelector("#demo-banner-copy").textContent = state.appConfig.read_only
+      ? "Read-only example batches are isolated from project records."
+      : "Writable examples are isolated from project records and can be reset at any time.";
+    document.querySelector("#service-state").lastChild.textContent = " Demo online";
+  }
+  iconRefresh();
 }
 
 function escapeHtml(value) {
@@ -270,6 +292,8 @@ function renderQualityDashboard(data) {
     ["Missing cover", quality.missing_vegetation_cover || 0],
     ["Missing taxon", quality.missing_dominant_taxon || 0],
     ["Integrity flags", quality.integrity_attention || 0],
+    ["Checks blocked", quality.verification_blocked || 0],
+    ["Check warnings", quality.verification_warnings || 0],
   ];
   document.querySelector("#quality-breakdown").innerHTML = breakdown.map(([label, count]) => `
     <div><strong>${escapeHtml(count)}</strong><span>${escapeHtml(label)}</span></div>
@@ -527,6 +551,12 @@ function filteredBatches() {
     return batches.filter((batch) => (batch.completion_status || "not_started") !== "reviewed");
   }
   if (state.filter === "published") return batches.filter((batch) => batch.status === "published");
+  if (state.filter === "verification") {
+    return batches.filter((batch) => (
+      (batch.completion_status || "not_started") !== "not_started"
+      && (batch.verification_status || "not_run") !== "passed"
+    ));
+  }
   if (state.filter === "active") return batches.filter((batch) => batch.status !== "published");
   return batches;
 }
@@ -561,6 +591,16 @@ function machineStatus(batch) {
     return {status: "succeeded", label: "Draft ready"};
   }
   return null;
+}
+
+function verificationStatus(batch) {
+  const status = batch.verification_status
+    || batch.latest_observation_verification?.status
+    || "not_run";
+  if (status === "blocked") return {status, label: "Checks blocked"};
+  if (status === "warnings") return {status, label: "Check warnings"};
+  if (status === "passed") return {status, label: "Checks passed"};
+  return {status: "not_run", label: "Checks pending"};
 }
 
 function updateMachineSelectionControls() {
@@ -671,6 +711,8 @@ function renderBatches() {
     const machineBadge = machine
       ? `<span class="machine-state machine-${escapeHtml(machine.status)}">${escapeHtml(machine.label)}</span>`
       : '<span class="machine-state machine-none">Not queued</span>';
+    const verification = verificationStatus(batch);
+    const verificationBadge = `<span class="verification-state verification-${escapeHtml(verification.status)}">${escapeHtml(verification.label)}</span>`;
     return `
       <div class="batch-list-item">
         <label class="batch-selector" title="${escapeHtml(eligibility.reason || "Select for machine review")}">
@@ -684,7 +726,7 @@ function renderBatches() {
           </span>
           <span class="batch-date">${escapeHtml(batch.observation_date)}</span>
           <span class="batch-count">${batch.reviewed_count || 0} / ${batch.photo_count} reviewed</span>
-          ${machineBadge}
+          <span class="batch-signals">${machineBadge}${verificationBadge}</span>
           <span class="status-badge status-${escapeHtml(batch.status)}">${escapeHtml(statusLabel(batch.status))}</span>
           <i data-lucide="chevron-right" aria-hidden="true"></i>
         </button>
@@ -730,7 +772,11 @@ function renderReview() {
   document.querySelector("#progress-label").textContent = `${reviewed} of ${batch.photos.length} reviewed`;
   document.querySelector("#accept-button").disabled = batch.status === "published";
   const publish = document.querySelector("#publish-button");
-  publish.disabled = batch.status !== "ready";
+  const verificationBlocked = Number(batch.latest_observation_verification?.blocking_count || 0) > 0;
+  publish.disabled = batch.status !== "ready" || verificationBlocked;
+  publish.title = verificationBlocked
+    ? "Resolve blocking automated verification issues before publishing"
+    : "Publish validated metadata";
   publish.innerHTML = batch.status === "published"
     ? '<i data-lucide="check" aria-hidden="true"></i> Published'
     : '<i data-lucide="database" aria-hidden="true"></i> Publish metadata';
@@ -907,6 +953,51 @@ function renderMachineReview() {
     : "<li>No field-level assessments were returned.</li>";
 }
 
+function renderObservationVerification() {
+  const batch = state.selectedBatch;
+  const verification = batch.latest_observation_verification;
+  const panel = document.querySelector("#verification-panel");
+  const summary = document.querySelector("#verification-summary");
+  const issues = document.querySelector("#verification-issues");
+  const button = document.querySelector("#run-verification-button");
+  const hasReview = Boolean(batch.observation_review);
+  const stale = hasReview && verification
+    && verification.review_updated_at !== batch.observation_review.updated_at;
+  button.disabled = !hasReview || state.verificationLoading;
+  button.innerHTML = state.verificationLoading
+    ? '<i data-lucide="loader-circle" aria-hidden="true"></i> Checking...'
+    : '<i data-lucide="shield-check" aria-hidden="true"></i> Run again';
+
+  const status = stale ? "pending" : (verification?.status || "pending");
+  panel.className = `verification-panel verification-${status}`;
+  if (!verification) {
+    summary.textContent = hasReview
+      ? "Verification has not run for this saved review."
+      : "Save an observation draft to run verification.";
+    issues.innerHTML = "";
+    return;
+  }
+  if (stale) {
+    summary.textContent = "The form has changed since the latest verification run.";
+  } else if (verification.status === "passed") {
+    summary.textContent = `Passed ${verification.verifier_version}. No issues found.`;
+  } else {
+    const blocking = Number(verification.blocking_count || 0);
+    const warnings = Number(verification.warning_count || 0);
+    summary.textContent = `${blocking} blocking issue${blocking === 1 ? "" : "s"}; ${warnings} warning${warnings === 1 ? "" : "s"}.`;
+  }
+  issues.innerHTML = (verification.issues || []).map((issue) => `
+    <li class="verification-issue verification-issue-${escapeHtml(issue.severity)}">
+      <span>${escapeHtml(issue.severity)}</span>
+      <div>
+        <strong>${escapeHtml(fieldLabel(issue.field_name))}</strong>
+        <p>${escapeHtml(issue.message)}</p>
+        <small>${escapeHtml(issue.suggested_fix)}</small>
+      </div>
+    </li>
+  `).join("");
+}
+
 function renderObservationReview() {
   const batch = state.selectedBatch;
   const form = document.querySelector("#observation-review-form");
@@ -942,7 +1033,30 @@ function renderObservationReview() {
   document.querySelector("#observation-save-state").textContent = humanEvents.length
     ? `${humanEvents.length} saved human review ${humanEvents.length === 1 ? "version" : "versions"}`
     : (published ? "Legacy publication; no local review history" : "Not saved yet");
+  renderObservationVerification();
   renderMachineReview();
+}
+
+async function runObservationVerification() {
+  if (!state.selectedBatch || state.verificationLoading) return;
+  state.verificationLoading = true;
+  renderObservationVerification();
+  iconRefresh();
+  try {
+    state.selectedBatch.latest_observation_verification = await api(
+      `/api/batches/${encodeURIComponent(state.selectedBatch.batch_id)}/verify-observation`,
+      {method: "POST"},
+    );
+    await loadDashboard({silent: true});
+    renderReview();
+    showToast("Automated verification complete.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    state.verificationLoading = false;
+    renderObservationVerification();
+    iconRefresh();
+  }
 }
 
 async function generateMachineReview() {
@@ -1333,6 +1447,7 @@ async function initialize() {
   document.querySelector("#accept-button").addEventListener("click", acceptSuggestions);
   document.querySelector("#publish-button").addEventListener("click", publishBatch);
   document.querySelector("#machine-review-button").addEventListener("click", generateMachineReview);
+  document.querySelector("#run-verification-button").addEventListener("click", runObservationVerification);
   document.querySelector("#apply-machine-draft-button").addEventListener("click", loadLatestMachineDraft);
   document.querySelector("#queue-machine-button").addEventListener("click", queueSelectedMachineReviews);
   document.querySelector("#retry-machine-button").addEventListener("click", retryFailedMachineReviews);
@@ -1372,8 +1487,17 @@ async function initialize() {
   setupFilePicker();
   iconRefresh();
   try {
+    await loadAppConfig();
     await Promise.all([loadSites(), loadMachineReviewConfig()]);
     await Promise.all([loadDashboard(), loadMachineQueue()]);
+    const initialParameters = new URLSearchParams(window.location.search);
+    const initialBatch = initialParameters.get("batch");
+    const initialView = initialParameters.get("view");
+    if (initialBatch) {
+      await openBatchFromDashboard(initialBatch);
+    } else if (["dashboard", "ingestion", "published"].includes(initialView)) {
+      setAppView(initialView);
+    }
     if (
       state.machineReviewConfig?.available
       && ((state.machineQueue?.counts?.queued || 0) > 0)
