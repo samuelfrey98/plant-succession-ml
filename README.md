@@ -1,5 +1,7 @@
 # Plant Succession ML Project
 
+[![CI](https://github.com/samuelfrey98/plant-succession-ml/actions/workflows/ci.yml/badge.svg)](https://github.com/samuelfrey98/plant-succession-ml/actions/workflows/ci.yml)
+
 An independent longitudinal field-data engineering project tracking vegetation change across disturbed
 urban edge habitats in Phoenixville, Pennsylvania.
 
